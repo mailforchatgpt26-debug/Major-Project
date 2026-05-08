@@ -1661,6 +1661,12 @@ async def get_news(
     
     # --- NEW: REAL-TIME FETCHING INJECTION ---
     news_list = []
+    pharma_terms = ("pharma", "pharmaceutical", "medicine", "drug", "biotech", "vaccine", "api")
+    trade_terms = ("trade", "export", "import", "shipment", "tariff", "market access")
+
+    def _is_pharma_trade_text(*parts: Optional[str]) -> bool:
+        text = " ".join([str(p or "") for p in parts]).lower()
+        return any(k in text for k in pharma_terms) and any(k in text for k in trade_terms)
     
     # Target partner or general trade news
     target_partner = partner if partner and partner not in ["undefined", "null", ""] else None
@@ -1730,6 +1736,8 @@ async def get_news(
                 try:
                     # Clean title/snippet
                     clean_title = art.get('title', '').split(' - ')[0]
+                    if not _is_pharma_trade_text(clean_title, art.get("domain"), art.get("snippet")):
+                        continue
 
                     # Real-time sentiment analysis
                     analysis = sentiment_analyzer.analyze_text(clean_title)
@@ -1843,6 +1851,19 @@ async def get_news(
                 (filtered['country_1_iso3'] == 'IND') | 
                 (filtered['country_2_iso3'] == 'IND')
             ]
+
+        # Keep only pharma-trade-relevant historical articles.
+        filtered = filtered[
+            filtered.apply(
+                lambda row: _is_pharma_trade_text(
+                    row.get("title"),
+                    row.get("domain"),
+                    row.get("snippet"),
+                    row.get("url"),
+                ),
+                axis=1,
+            )
+        ]
         
         # Sort so we always return the most recent items.
         def _parse_dt(v):

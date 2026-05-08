@@ -140,7 +140,10 @@ class GDELTArticleFetcher:
 
         c1_name = ISO3_TO_NAME.get(country1, country1)
         c2_name = ISO3_TO_NAME.get(country2, country2)
-        query = f'"{c1_name}" "{c2_name}" (trade OR export OR import)'
+        query = (
+            f'"{c1_name}" "{c2_name}" '
+            "((pharma OR pharmaceutical OR medicine OR drug) AND (trade OR export OR import))"
+        )
 
         for attempt in range(_MAX_FETCH_ATTEMPTS):
             try:
@@ -204,7 +207,10 @@ class GDELTArticleFetcher:
         for attempt in range(_MAX_FETCH_ATTEMPTS):
             try:
                 f = Filters(timespan="3d", num_records=min(max_articles, 250), language="English")
-                query = '"India" (pharma OR pharmaceutical OR medicine OR trade OR export OR import)'
+                query = (
+                    '"India" '
+                    "((pharma OR pharmaceutical OR medicine OR drug) AND (trade OR export OR import))"
+                )
                 f.query_params.insert(
                     0,
                     query
