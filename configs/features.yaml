@@ -1,0 +1,159 @@
+# Feature Engineering Configuration
+
+# Node Features (Country-level attributes)
+node_features:
+  static:
+    - name: "region"
+      type: "categorical"
+      encoding: "onehot"
+      categories: ["East Asia & Pacific", "Europe & Central Asia", "Latin America & Caribbean",
+                   "Middle East & North Africa", "North America", "South Asia", "Sub-Saharan Africa"]
+    
+    - name: "income_group"
+      type: "categorical"
+      encoding: "onehot"
+      categories: ["Low income", "Lower middle income", "Upper middle income", "High income"]
+  
+  temporal:
+    - name: "gdp_usd"
+      type: "numeric"
+      transform: "log1p"
+      normalization: "standard"
+      source: "world_bank"
+      imputation: "forward_fill"
+      
+    - name: "population"
+      type: "numeric"
+      transform: "log1p"
+      normalization: "standard"
+      source: "world_bank"
+      imputation: "forward_fill"
+    
+    - name: "inflation_rate"
+      type: "numeric"
+      transform: null
+      normalization: "robust"
+      source: "world_bank"
+      imputation: "median"
+      clip: [-10, 100]  # clip extreme values
+    
+    - name: "manufacturing_value_added"
+      type: "numeric"
+      transform: "log1p"
+      normalization: "standard"
+      source: "world_bank"
+      imputation: "median"
+      optional: true
+
+# Edge Features (Bilateral relationship attributes)
+edge_features:
+  static:
+    - name: "distance_km"
+      type: "numeric"
+      transform: "log"
+      normalization: "standard"
+      source: "cepii"
+      imputation: "median"
+    
+    - name: "shared_language"
+      type: "binary"
+      source: "cepii"
+      default: 0
+    
+    - name: "contiguous"
+      type: "binary"
+      source: "cepii"
+      default: 0
+    
+    - name: "fta_binary"
+      type: "binary"
+      source: "wto_rtas"
+      default: 0
+      temporal: true  # can change over time
+  
+  temporal:
+    - name: "sentiment_avg_tone"
+      type: "numeric"
+      transform: "normalize"  # from [-10, 10] to [0, 1]
+      normalization: null
+      source: "gdelt"
+      imputation: "zero"
+      window: "monthly"
+    
+    - name: "article_count"
+      type: "numeric"
+      transform: "log1p"
+      normalization: "standard"
+      source: "gdelt"
+      imputation: "zero"
+    
+    - name: "trade_lag_1"
+      type: "numeric"
+      transform: "log1p"
+      normalization: null
+      source: "comtrade"
+      description: "Previous month/year trade value"
+    
+    - name: "trade_lag_2"
+      type: "numeric"
+      transform: "log1p"
+      normalization: null
+      source: "comtrade"
+      description: "2 periods back trade value"
+    
+    - name: "trade_lag_3"
+      type: "numeric"
+      transform: "log1p"
+      normalization: null
+      source: "comtrade"
+      description: "3 periods back trade value"
+    
+    - name: "trade_rolling_avg_3"
+      type: "numeric"
+      transform: "log1p"
+      normalization: null
+      source: "comtrade"
+      description: "3-period rolling average"
+    
+    - name: "trade_rolling_avg_6"
+      type: "numeric"
+      transform: "log1p"
+      normalization: null
+      source: "comtrade"
+      description: "6-period rolling average"
+
+# Target Variable
+target:
+  name: "trade_value_usd"
+  transform: "log1p"
+  description: "Bilateral trade value in USD (log-transformed)"
+
+# Feature Selection
+feature_selection:
+  method: "correlation"  # "correlation", "mutual_info", "model_based"
+  threshold: 0.05
+  max_features: 50
+
+# Derived Features
+derived_features:
+  - name: "gdp_ratio"
+    formula: "source_gdp / target_gdp"
+    transform: "log"
+  
+  - name: "population_ratio"
+    formula: "source_population / target_population"
+    transform: "log"
+  
+  - name: "trade_momentum"
+    formula: "trade_lag_1 - trade_lag_2"
+    transform: null
+  
+  - name: "sentiment_change"
+    formula: "sentiment_avg_tone - sentiment_avg_tone_lag_1"
+    transform: null
+
+# Feature Importance Tracking
+feature_importance:
+  track: true
+  methods: ["permutation", "attention_weights"]
+  top_k: 10

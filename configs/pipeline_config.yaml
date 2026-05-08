@@ -1,0 +1,310 @@
+# Data Pipeline Configuration
+
+# Data Sources
+data_sources:
+  # comtrade:
+  #   path: "data/raw/comtrade/TradeData.csv"
+  #   encoding: "latin1"
+  #   required_columns: ["reporterDesc", "partnerDesc", "refYear", "refMonth", 
+  #                      "flowDesc", "cmdCode", "primaryValue"]
+  #   filters:
+  #     flowDesc: ["Export"]
+  #     # cmdCode: ["3004", "61", "62", "63"]
+  comtrade:
+    path: "data/raw/comtrade/TradeData.csv"
+    encoding: "latin1"
+
+    # The actual columns in your file
+    required_columns: [
+      "typeCode", "freqCode", "refPeriodId", "refYear", "refMonth", "period",
+      "reporterCode", "reporterISO", "reporterDesc",
+      "flowCode", "flowDesc",
+      "partnerCode", "partnerISO", "partnerDesc",
+      "partner2Code", "partner2ISO", "partner2Desc",
+      "classificationCode", "classificationSearchCode", "isOriginalClassification",
+      "cmdCode", "cmdDesc", "aggrLevel", "isLeaf",
+      "customsCode", "customsDesc", "mosCode", "motCode", "motDesc",
+      "qtyUnitCode", "qtyUnitAbbr", "qty", "isQtyEstimated",
+      "altQtyUnitCode", "altQtyUnitAbbr", "altQty", "isAltQtyEstimated",
+      "netWgt", "isNetWgtEstimated", "grossWgt", "isGrossWgtEstimated",
+      "cifvalue", "fobvalue", "primaryValue",
+      "legacyEstimationFlag", "isReported", "isAggregate"
+    ]
+
+    filters:
+      # IMPORTANT FIX:
+      # Your flowDesc column contains numbers, NOT Export/Import text.
+      # flowCode = X for exports, M for imports.
+      flowCode: ["X"]          # <- KEEP ONLY EXPORTS
+
+      # Filter HS codes for Pharma (3004) and Textiles (61-63)
+      # cmdCode: ["3004", "61", "62", "63"]
+  
+  world_bank:
+    gdp:
+      path: "data/raw/world-bank/API_NY.GDP.MKTP.CD_DS2_en_csv_v2_75934.csv"
+      skiprows: 4
+      indicator: "GDP (current US$)"
+    
+    population:
+      path: "data/raw/world-bank/API_SP.POP.TOTL_DS2_en_csv_v2_76034.csv"
+      skiprows: 4
+      indicator: "Population, total"
+    
+    inflation:
+      path: "data/raw/world-bank/API_FP.CPI.TOTL.ZG_DS2_en_csv_v2_73483.csv"
+      skiprows: 4
+      indicator: "Inflation, consumer prices (annual %)"
+  
+  cepii:
+    geodist:
+      path: "data/raw/cepii/dist_cepii.csv"
+      required_columns: ["iso_o", "iso_d", "dist", "distw", "comlang_off", "contig"]
+  
+  wto:
+    rtas:
+      path: "data/raw/rta/AllRTAs.csv"
+      required_columns: ["RTA Name", "Current signatories"]
+  
+  gdelt:
+    bigquery:
+      project_id: "${GCP_PROJECT_ID}"
+      events_table: "gdelt-bq.gdeltv2.events"
+      gkg_table: "gdelt-bq.gdeltv2.gkg"
+      start_date: "2015-01-01"
+    
+    cache:
+      path: "data/live/gdelt_latest"
+      aggregates_file: "gdelt_aggregates.parquet"
+      articles_file: "gdelt_articles.parquet"
+
+# Preprocessing Pipeline Stages
+preprocessing_stages:
+  - stage: "load_raw_data"
+    enabled: true
+    parallel: true
+    
+  - stage: "normalize_country_names"
+    enabled: true
+    config:
+      manual_mappings:
+        "Czech Republic": "CZE"
+        "Korea, Rep.": "KOR"
+        "United States of America": "USA"
+        "Viet Nam": "VNM"
+        "Russian Federation": "RUS"
+        "United Kingdom": "GBR"
+        "Iran, Islamic Rep.": "IRN"
+        "Egypt, Arab Rep.": "EGY"
+  
+  - stage: "filter_data"
+    enabled: true
+    config:
+      min_trade_value: 10000
+      years: [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
+      focus_sectors: ["Pharmaceuticals", "Textiles"]
+  
+  - stage: "feature_engineering"
+    enabled: true
+    config:
+      lag_periods: [1, 2, 3]
+      rolling_windows: [3, 6]
+      derived_features: true
+  
+  - stage: "merge_datasets"
+    enabled: true
+    merge_order:
+      - "comtrade"  # base
+      - "cepii"     # add distance
+      - "world_bank"  # add node features
+      - "wto"       # add FTA
+      - "gdelt"     # add sentiment
+  
+  - stage: "handle_missing_values"
+    enabled: true
+    config:
+      strategy: "smart"  # use different strategies per feature
+      max_missing_ratio: 0.3  # drop features with >30% missing
+  
+  - stage: "normalization"
+    enabled: true
+    config:
+      fit_on: "train"
+      method: "standard"
+      save_scalers: true
+      scaler_path: "models/scalers"
+  
+  - stage: "build_graph"
+    enabled: true
+    config:
+      node_id_mapping: "data/processed/node_id_mapping.json"
+      edge_index_format: "coo"  # for PyTorch Geometric
+      temporal_snapshots: true
+      snapshot_frequency: "monthly"
+  
+  - stage: "save_processed"
+    enabled: true
+    output:
+      nodes: "data/processed/nodes.csv"
+      edges: "data/processed/edges.csv"
+      graph_snapshots: "data/processed/graph_snapshots"
+      metadata: "data/processed/metadata.json"
+
+# GDELT Real-time Pipeline
+gdelt_pipeline:
+  fetch_schedule:
+    enabled: true
+    interval_minutes: 15
+    method: "bigquery"  # or "http" for CSV files
+  
+  aggregation:
+    temporal_resolution: "monthly"
+    metrics:
+      - "avg_tone"
+      - "article_count"
+      - "goldstein_scale_avg"
+  
+  article_extraction:
+    enabled: true
+    max_articles_per_pair: 100
+    fields: ["url", "date", "avg_tone", "themes", "persons", "organizations"]
+  
+  storage:
+    database: true  # store in PostgreSQL
+    cache: true     # also cache in Redis
+    files: true     # backup to files
+
+# Model Training Pipeline
+training_pipeline:
+  schedule:
+    type: "cron"
+    expression: "0 2 * * *"  # daily at 2 AM
+    enabled: true
+  
+  data_refresh:
+    refetch_gdelt: true
+    rebuild_graph: true
+    recompute_features: false  # unless schema changes
+  
+  validation:
+    method: "time_series_split"
+    n_splits: 3
+    test_size_months: 3
+  
+  hyperparameter_tuning:
+    enabled: false  # enable for experimentation
+    method: "optuna"
+    n_trials: 50
+    parameters:
+      learning_rate: [0.0001, 0.01]
+      hidden_dims: [[64, 32], [128, 64], [256, 128, 64]]
+      dropout: [0.1, 0.5]
+  
+  model_versioning:
+    strategy: "timestamp"
+    format: "v{version}_{timestamp}"
+    save_location: "models/saved_models"
+  
+  model_selection:
+    metric: "rmse"
+    mode: "min"
+    promote_to_production: true
+
+# Inference Pipeline
+inference_pipeline:
+  trigger:
+    - "on_new_gdelt_data"
+    - "on_schedule"  # every hour
+    - "on_demand"    # API request
+  
+  prediction_horizon:
+    months: 1  # predict next month
+  
+  batch_size: 64
+  
+  post_processing:
+    - "expm1_transform"  # reverse log1p
+    - "clip_negatives"
+    - "confidence_estimation"
+    - "attention_extraction"
+  
+  storage:
+    database: true
+    cache: true
+    ttl_seconds: 900  # 15 minutes
+
+# Alert Pipeline
+alert_pipeline:
+  enabled: true
+  
+  thresholds:
+    sentiment_shock:
+      min_change: 2.0
+      lookback_periods: 1
+    
+    prediction_drop:
+      min_drop_pct: 0.15
+    
+    prediction_spike:
+      min_spike_pct: 0.20
+  
+  severity_rules:
+    critical:
+      - "prediction_drop_pct > 0.30"
+      - "sentiment_change < -5"
+    
+    high:
+      - "prediction_drop_pct > 0.20"
+      - "sentiment_change < -3"
+    
+    medium:
+      - "prediction_drop_pct > 0.15"
+      - "sentiment_change < -2"
+    
+    low:
+      - "prediction_spike_pct > 0.20"
+  
+  recommendation_engine:
+    enabled: true
+    top_k: 3
+    scoring:
+      growth_weight: 0.4
+      distance_weight: 0.3
+      fta_weight: 0.3
+  
+  notification:
+    channels: ["database", "api"]
+    email_enabled: false  # can enable for production
+
+# Monitoring & Logging
+monitoring:
+  logging:
+    level: "INFO"
+    format: "json"
+    file: "logs/pipeline.log"
+    rotation: "daily"
+    retention_days: 30
+  
+  metrics:
+    track_performance: true
+    track_data_quality: true
+    track_model_drift: true
+  
+  alerts:
+    data_quality_issues: true
+    pipeline_failures: true
+    model_performance_degradation: true
+
+# Performance Optimization
+optimization:
+  parallel_processing:
+    enabled: true
+    n_workers: 4
+  
+  caching:
+    enabled: true
+    backend: "redis"
+  
+  database:
+    batch_insert_size: 1000
+    connection_pool_size: 10

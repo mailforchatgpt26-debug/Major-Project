@@ -1,0 +1,29 @@
+{
+  "num_nodes": 220,
+  "num_edges": 45276,
+  "num_countries": 220,
+  "years": [
+    2011,
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "sectors": [
+    "Pharmaceuticals"
+  ],
+  "train_edges": 38923,
+  "val_edges": 3141,
+  "test_edges": 3212,
+  "india_export_edges": 34169
+}

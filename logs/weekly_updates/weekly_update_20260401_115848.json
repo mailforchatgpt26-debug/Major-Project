@@ -1,0 +1,14 @@
+{
+  "timestamp": "20260401_115848",
+  "steps_completed": [
+    "fetch_articles",
+    "analyze_sentiment"
+  ],
+  "errors": [
+    "preprocess_data: Comtrade data is empty after loading. Cannot proceed."
+  ],
+  "articles_fetched": 135,
+  "articles_analyzed": 116,
+  "bilateral_pairs": 10,
+  "avg_sentiment": -0.15323413275559694
+}

@@ -1,0 +1,137 @@
+# Model Architecture Configuration
+model:
+  type: "GAT"  # Graph Attention Network
+  version: "v1.0"
+  
+  # Node feature dimensions
+  node_input_dim: 8  # [gdp_log, pop_log, inflation, manufacturing, region_encoded...]
+  
+  # Edge feature dimensions
+  edge_input_dim: 6  # [distance_log, fta_binary, shared_lang, sentiment_norm, lag1_log, lag2_log]
+  
+  # GNN Layers
+  gnn_layers:
+    - type: "GATConv"
+      in_channels: 8
+      out_channels: 64
+      heads: 4
+      dropout: 0.2
+      concat: true
+      
+    - type: "GATConv"
+      in_channels: 256  # 64 * 4 heads
+      out_channels: 32
+      heads: 2
+      dropout: 0.2
+      concat: false
+  
+  # Edge Prediction MLP
+  edge_mlp:
+    input_dim: 102  # node_emb1(32) + node_emb2(32) + edge_features(6) + global_features(32)
+    hidden_dims: [128, 64, 32]
+    output_dim: 1
+    dropout: 0.3
+    activation: "relu"
+  
+  # Global pooling for graph-level features
+  global_pooling:
+    type: "attention"  # or "mean", "max"
+    output_dim: 32
+
+# Training Configuration
+training:
+  epochs: 200
+  batch_size: 32  # for temporal snapshots
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  
+  # Optimization
+  optimizer: "adam"
+  scheduler:
+    type: "reduce_on_plateau"
+    mode: "min"
+    factor: 0.5
+    patience: 10
+    min_lr: 0.00001
+  
+  # Loss function
+  loss: "mse"  # for log-transformed values
+  loss_weights:
+    prediction: 1.0
+    regularization: 0.0001
+  
+  # Early stopping
+  early_stopping:
+    patience: 20
+    min_delta: 0.0001
+    mode: "min"
+  
+  # Gradient clipping
+  grad_clip_norm: 1.0
+  
+  # Validation
+  val_split: 0.15
+  test_split: 0.15
+  
+  # Checkpointing
+  save_best_only: true
+  save_frequency: 10  # epochs
+
+# Data Configuration
+data:
+  # Temporal setup
+  start_year: 2015
+  end_year: 2024
+  temporal_granularity: "monthly"  # or "yearly"
+  
+  # Train/val/test split (time-based)
+  train_end_year: 2021
+  train_end_month: 12
+  val_end_year: 2022
+  val_end_month: 12
+  
+  # Feature engineering
+  lag_features: [1, 2, 3]  # months to look back
+  rolling_windows: [3, 6]  # for rolling averages
+  
+  # Normalization
+  normalize_method: "standard"  # "standard", "minmax", "robust"
+  log_transform:
+    - "trade_value"
+    - "gdp_usd"
+    - "population"
+    - "distance_km"
+  
+  # Missing value handling
+  imputation_strategy: "median"  # "mean", "median", "forward_fill"
+  
+  # Filtering
+  min_trade_value: 10000  # USD, filter out very small trades
+  focus_countries: ["IND"]  # India as source
+  sectors: ["Pharmaceuticals", "Textiles"]
+
+# Inference Configuration
+inference:
+  device: "cuda"  # or "cpu"
+  batch_size: 64
+  
+  # Confidence estimation
+  uncertainty_method: "monte_carlo_dropout"
+  mc_samples: 50
+  dropout_rate: 0.2
+  
+  # Caching
+  cache_predictions: true
+  cache_ttl_seconds: 900  # 15 minutes
+
+# Model Explainability
+explainability:
+  enable_attention_weights: true
+  enable_feature_importance: true
+  
+  # Feature importance methods
+  feature_importance_method: "permutation"  # "permutation", "shap", "integrated_gradients"
+  n_permutations: 10
+  
+  # Attention visualization
+  attention_threshold: 0.1  # only show weights above this
