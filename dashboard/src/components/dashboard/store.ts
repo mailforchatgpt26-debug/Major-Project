@@ -143,6 +143,12 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
 
   loadNews: async (partner) => {
     const { sector, month } = get()
+    const buildFallbackNews = () => {
+      const fallbackNews = mockNews({ sector, month })
+      return partner && partner !== "undefined"
+        ? fallbackNews.filter((article) => article.country_code === partner)
+        : fallbackNews
+    }
 
     set((state) => ({
       loading: { ...state.loading, news: true },
@@ -155,7 +161,14 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
         { ...apiFetchInit, signal: AbortSignal.timeout(65000) }
       )
 
-      if (!res.ok) throw new Error(`API returned ${res.status}`)
+      if (!res.ok) {
+        const filteredFallbackNews = buildFallbackNews()
+        set((state) => ({
+          news: filteredFallbackNews,
+          loading: { ...state.loading, news: false },
+        }))
+        return
+      }
 
       const news = await res.json()
       const filteredNews =
@@ -169,17 +182,12 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
       }))
       console.log(`✓ Loaded ${news.length} general articles from API (${filteredNews.length} after filter)`)
     } catch (error) {
-      console.error("Failed to load news:", error)
-      const fallbackNews = mockNews({ sector, month })
-      const filteredFallbackNews =
-        partner && partner !== "undefined"
-          ? fallbackNews.filter((article) => article.country_code === partner)
-          : fallbackNews
+      const filteredFallbackNews = buildFallbackNews()
       set((state) => ({
         news: filteredFallbackNews,
         loading: { ...state.loading, news: false },
       }))
-      console.log(`⚠ Using ${fallbackNews.length} mock news articles (${filteredFallbackNews.length} after filter)`)
+      console.log(`⚠ Using fallback news (${filteredFallbackNews.length} after filter)`)
     }
   },
 
