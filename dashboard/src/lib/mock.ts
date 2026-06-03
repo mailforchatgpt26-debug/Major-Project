@@ -1,182 +1,237 @@
-import type { AlertItem, Explainability, NewsArticle, Prediction } from "./types"
+import type { AlertItem, Explainability, NewsArticle, Prediction, ResiliencePartner, TradeResilience } from "./types"
+import mockNewsPayload from "./mock-news-data.json"
 
-export function mockPredictions({ sector, month }: { sector: string; month: string }): Prediction[] {
-  const countries = [
-    { code: "USA", name: "United States", baseValue: 2500, change: 0.08 },
-    { code: "CHN", name: "China", baseValue: 1800, change: -0.12 },
-    { code: "DEU", name: "Germany", baseValue: 950, change: 0.15 },
-    { code: "GBR", name: "United Kingdom", baseValue: 720, change: 0.05 },
-    { code: "JPN", name: "Japan", baseValue: 680, change: -0.08 },
-    { code: "FRA", name: "France", baseValue: 580, change: 0.12 },
-    { code: "NLD", name: "Netherlands", baseValue: 520, change: 0.18 },
-    { code: "ITA", name: "Italy", baseValue: 480, change: -0.05 },
-    { code: "CAN", name: "Canada", baseValue: 450, change: 0.09 },
-    { code: "KOR", name: "South Korea", baseValue: 420, change: -0.15 },
-  ]
+import { displayPharmaExportShare } from "./pharma-constants"
 
-  return countries.map((country) => {
-    const exportForecast = Math.round(country.baseValue * (1 + Math.random() * 0.2 - 0.1))
-    const exportChange = country.change + (Math.random() * 0.1 - 0.05)
-    return {
-      partnerCode: country.code,
-      partner: country.name,
-      export_forecast: exportForecast,
-      export_change: exportChange,
-      import_change: exportChange * 0.8,
-      confidence: 0.7 + Math.random() * 0.3,
-      risk_level: country.change < -0.1 ? "high" : country.change > 0.1 ? "low" : "medium" as const,
-    }
-  })
+/** Top pharma partners — aligned with API / GOVT 2025 export targets (USD M). */
+const PHARMA_MOCK_PREDICTIONS: Prediction[] = [
+  { partnerCode: "USA", partner: "United States", export_forecast: 10500, export_change: 0.05, import_change: 0.04, confidence: 0.92, risk_level: "low" },
+  { partnerCode: "GBR", partner: "United Kingdom", export_forecast: 910, export_change: -0.014, import_change: 0.04, confidence: 0.88, risk_level: "low" },
+  { partnerCode: "BRA", partner: "Brazil", export_forecast: 778, export_change: 0.10, import_change: 0.05, confidence: 0.85, risk_level: "medium" },
+  { partnerCode: "ZAF", partner: "South Africa", export_forecast: 740, export_change: -0.018, import_change: 0.03, confidence: 0.84, risk_level: "low" },
+  { partnerCode: "FRA", partner: "France", export_forecast: 720, export_change: 0.071, import_change: 0.06, confidence: 0.86, risk_level: "medium" },
+  { partnerCode: "NLD", partner: "Netherlands", export_forecast: 616, export_change: -0.138, import_change: 0.05, confidence: 0.87, risk_level: "medium" },
+  { partnerCode: "CAN", partner: "Canada", export_forecast: 620, export_change: -0.05, import_change: 0.04, confidence: 0.83, risk_level: "medium" },
+  { partnerCode: "DEU", partner: "Germany", export_forecast: 598, export_change: 0.08, import_change: 0.06, confidence: 0.89, risk_level: "low" },
+  { partnerCode: "RUS", partner: "Russia", export_forecast: 577, export_change: -0.05, import_change: 0.04, confidence: 0.78, risk_level: "high" },
+  { partnerCode: "ARE", partner: "UAE", export_forecast: 520, export_change: -0.177, import_change: 0.05, confidence: 0.81, risk_level: "high" },
+  { partnerCode: "CHN", partner: "China", export_forecast: 530, export_change: -0.106, import_change: 0.03, confidence: 0.80, risk_level: "high" },
+  { partnerCode: "BEL", partner: "Belgium", export_forecast: 450, export_change: -0.074, import_change: 0.05, confidence: 0.82, risk_level: "medium" },
+  { partnerCode: "NPL", partner: "Nepal", export_forecast: 260, export_change: 0.069, import_change: 0.15, confidence: 0.76, risk_level: "medium" },
+  { partnerCode: "MEX", partner: "Mexico", export_forecast: 300, export_change: -0.038, import_change: 0.04, confidence: 0.79, risk_level: "low" },
+  { partnerCode: "TUR", partner: "Turkey", export_forecast: 250, export_change: -0.16, import_change: 0.04, confidence: 0.77, risk_level: "high" },
+  { partnerCode: "LKA", partner: "Sri Lanka", export_forecast: 220, export_change: -0.146, import_change: 0.03, confidence: 0.75, risk_level: "high" },
+  { partnerCode: "THA", partner: "Thailand", export_forecast: 210, export_change: -0.001, import_change: 0.04, confidence: 0.80, risk_level: "low" },
+]
+
+export function mockPredictions(_opts: { sector: string; month: string }): Prediction[] {
+  return PHARMA_MOCK_PREDICTIONS.map((p) => ({ ...p }))
 }
 
-export function mockAlerts({ sector, month }: { sector: string; month: string }): AlertItem[] {
+export function mockAlerts(_opts: { sector: string; month: string }): AlertItem[] {
   return [
     {
-      id: "alert-1",
+      id: "alert-uae-decline",
       type: "risk",
-      title: "China Export Decline",
-      summary: "Predicted 12% drop in pharmaceutical exports to China due to trade tensions",
-      partner: "China",
-      partnerCode: "CHN",
-      change: -0.12,
+      title: "UAE Export Decline",
+      summary: "Pharmexcil reports ~17.7% drop in India pharma exports to UAE (FY2024 → FY2025)",
+      partner: "UAE",
+      partnerCode: "ARE",
+      change: -0.177,
       recommendations: [
         {
-          country_code: "VNM",
-          country_name: "Vietnam",
-          predicted_value: 450,
-          growth_rate: 0.22,
-          confidence: 0.85,
+          country_code: "SAU",
+          country_name: "Saudi Arabia",
+          predicted_value: 650,
+          growth_rate: 0.08,
+          confidence: 0.82,
           risk_level: "low",
-          recommendation_score: 0.9,
-          rationale: "Strong regional alternative with 22% predicted growth",
-        },
-        {
-          country_code: "THA",
-          country_name: "Thailand",
-          predicted_value: 380,
-          growth_rate: 0.18,
-          confidence: 0.78,
-          risk_level: "medium",
-          recommendation_score: 0.8,
-          rationale: "Diversify supply chain to reduce China dependency",
+          recommendation_score: 0.78,
+          rationale: "Diversify Gulf exposure toward growing Saudi market",
         },
       ],
     },
     {
-      id: "alert-2",
-      type: "opportunity",
-      title: "Germany Market Growth",
-      summary: "15% increase expected in textile exports to Germany",
-      partner: "Germany",
-      partnerCode: "DEU",
-      change: 0.15,
+      id: "alert-nld-decline",
+      type: "risk",
+      title: "Netherlands Export Decline",
+      summary: "India pharma exports to Netherlands down ~13.8% YoY per Pharmexcil data",
+      partner: "Netherlands",
+      partnerCode: "NLD",
+      change: -0.138,
       recommendations: [
         {
-          country_code: "FRA",
-          country_name: "France",
-          predicted_value: 620,
-          growth_rate: 0.12,
-          confidence: 0.92,
-          risk_level: "low",
-          recommendation_score: 0.85,
-          rationale: "Leverage proximity to capitalize on European growth",
-        },
-        {
-          country_code: "NLD",
-          country_name: "Netherlands",
-          predicted_value: 540,
-          growth_rate: 0.18,
+          country_code: "DEU",
+          country_name: "Germany",
+          predicted_value: 790,
+          growth_rate: 0.10,
           confidence: 0.88,
           risk_level: "low",
-          recommendation_score: 0.88,
-          rationale: "Use Dutch ports for optimized distribution",
+          recommendation_score: 0.85,
+          rationale: "Shift EU portfolio toward stronger German demand",
         },
       ],
     },
     {
-      id: "alert-3",
-      type: "risk",
-      title: "South Korea Sentiment Shift",
-      summary: "Negative news sentiment affecting Korean market confidence",
-      partner: "South Korea",
-      partnerCode: "KOR",
-      change: -0.15,
+      id: "alert-usa-growth",
+      type: "opportunity",
+      title: "USA Remains Top Market",
+      summary: "USA pharma exports ~$10.5B in 2025; recovery expected in specialty segments 2026+",
+      partner: "United States",
+      partnerCode: "USA",
+      change: 0.05,
       recommendations: [
         {
-          country_code: "JPN",
-          country_name: "Japan",
-          predicted_value: 710,
-          growth_rate: 0.05,
-          confidence: 0.9,
+          country_code: "CAN",
+          country_name: "Canada",
+          predicted_value: 790,
+          growth_rate: 0.03,
+          confidence: 0.84,
           risk_level: "low",
-          recommendation_score: 0.75,
-          rationale: "Stable alternative market with lower volatility",
+          recommendation_score: 0.72,
+          rationale: "Expand NAFTA corridor alongside US focus",
         },
       ],
     },
+    {
+      id: "alert-npl-growth",
+      type: "opportunity",
+      title: "Nepal Export Growth",
+      summary: "India → Nepal pharma exports estimated ~$260M in 2025, up from ~$244M in 2024",
+      partner: "Nepal",
+      partnerCode: "NPL",
+      change: 0.069,
+      recommendations: [],
+    },
   ]
 }
 
-export function mockNews({ sector, month, partner }: { sector: string; month: string; partner?: string }): NewsArticle[] {
-  const articles = [
-    {
-      id: "news-1",
-      title: "China Announces New Pharmaceutical Import Regulations",
-      snippet: "New regulatory framework expected to impact foreign pharmaceutical imports...",
-      source: "Reuters",
-      url: "https://www.reuters.com/business/healthcare-pharmaceuticals/",
-      date: "2024-01-15",
-      sentiment: -0.3,
-      relevance_score: 0.85,
-      country_code: "CHN",
-    },
-    {
-      id: "news-2",
-      title: "Germany's Healthcare Sector Shows Strong Recovery",
-      snippet: "German pharmaceutical market demonstrates robust growth in Q4...",
-      source: "Bloomberg",
-      url: "https://www.bloomberg.com/news/articles/2024-01-12/germany-s-healthcare-sector-recovery",
-      date: "2024-01-12",
-      sentiment: 0.6,
-      relevance_score: 0.92,
-      country_code: "DEU",
-    },
-    {
-      id: "news-3",
-      title: "US Textile Industry Faces Supply Chain Challenges",
-      snippet: "Ongoing supply chain disruptions affecting textile imports...",
-      source: "Wall Street Journal",
-      url: "https://www.wsj.com/articles/supply-chain-crisis-textile-industry-11634563801",
-      date: "2024-01-10",
-      sentiment: -0.4,
-      relevance_score: 0.78,
-      country_code: "USA",
-    },
-  ]
+const MOCK_NEWS_ARTICLES: NewsArticle[] = (mockNewsPayload as { articles: NewsArticle[] }).articles ?? []
 
-  return (partner ? articles.filter(a => a.country_code === partner) : articles).map(art => ({
-    ...art,
-    // ONLY use search fallback if the URL is not a direct reuters/bloomberg/wsj link
-    url: art.url.includes("reuters.com") || art.url.includes("bloomberg.com") || art.url.includes("wsj.com")
-      ? art.url
-      : `https://www.google.com/search?q=${encodeURIComponent(art.title)}&tbm=nws`
-  }))
+export function mockNews({
+  sector: _sector,
+  month: _month,
+  partner,
+}: {
+  sector: string
+  month: string
+  partner?: string
+}): NewsArticle[] {
+  const articles = MOCK_NEWS_ARTICLES.length > 0 ? MOCK_NEWS_ARTICLES : []
+  if (partner && partner !== "undefined") {
+    return articles.filter((a) => a.country_code === partner)
+  }
+  return articles
 }
 
-export function mockExplainability({ sector, month, partner }: { sector: string; month: string; partner?: string }): Explainability {
+/** Localization-risk corridors — aligned with API PHARMA_AVOID_MARKETS + decline-window YoY. */
+const PHARMA_VULNERABLE: Array<{ code: string; name: string; yoy: number; forecast: number }> = [
+  { code: "SAU", name: "Saudi Arabia", yoy: -0.082, forecast: 650 },
+  { code: "ARE", name: "UAE", yoy: -0.10, forecast: 520 },
+  { code: "TUR", name: "Turkey", yoy: -0.095, forecast: 250 },
+  { code: "BGD", name: "Bangladesh", yoy: -0.09, forecast: 240 },
+  { code: "EGY", name: "Egypt", yoy: -0.07, forecast: 270 },
+  { code: "NGA", name: "Nigeria", yoy: -0.08, forecast: 310 },
+  { code: "ZAF", name: "South Africa", yoy: -0.065, forecast: 740 },
+  { code: "IDN", name: "Indonesia", yoy: -0.055, forecast: 130 },
+]
+
+const PHARMA_EXPANSION: Array<{ code: string; name: string; yoy: number; forecast: number }> = [
+  { code: "USA", name: "United States", yoy: 0.143, forecast: 10500 },
+  { code: "DEU", name: "Germany", yoy: 0.071, forecast: 598 },
+  { code: "GBR", name: "United Kingdom", yoy: 0.17, forecast: 910 },
+  { code: "JPN", name: "Japan", yoy: 0.052, forecast: 480 },
+  { code: "CAN", name: "Canada", yoy: 0.094, forecast: 620 },
+]
+
+const MOCK_NEWS_SENTIMENT: Record<string, { sent: number; policy: number; note: string }> = {
+  SAU: { sent: -0.41, policy: 0.74, note: "Vision 2030 localization and domestic biopharma capacity targets" },
+  ARE: { sent: -0.34, policy: 0.64, note: "Gulf re-export hub competition and regional production build-out" },
+  TUR: { sent: -0.39, policy: 0.71, note: "Import-substitution and domestic industry support measures" },
+  BGD: { sent: -0.36, policy: 0.68, note: "Growing self-sufficiency in pharmaceutical manufacturing" },
+  EGY: { sent: -0.33, policy: 0.65, note: "Expansion of local pharmaceutical production facilities" },
+  NGA: { sent: -0.27, policy: 0.58, note: "Gradual local manufacturing and API park initiatives" },
+  ZAF: { sent: -0.31, policy: 0.62, note: "Regional manufacturing under African industrialization programs" },
+  IDN: { sent: -0.35, policy: 0.66, note: "Domestic pharma sector expansion and import-substitution pressure" },
+  USA: { sent: 0.48, policy: 0.20, note: "Record India→US pharma investment pledges; constructive FDA dialogue" },
+  DEU: { sent: 0.26, policy: 0.28, note: "Stable EU demand; periodic EU tariff scrutiny" },
+  GBR: { sent: 0.31, policy: 0.26, note: "UK–India trade continuity; moderate customs friction" },
+  JPN: { sent: 0.24, policy: 0.24, note: "Steady regulated market access" },
+  CAN: { sent: 0.29, policy: 0.22, note: "North America corridor stability" },
+}
+
+function mockResiliencePartner(
+  row: { code: string; name: string; yoy: number; forecast: number },
+  risk_level: "low" | "medium" | "high"
+): ResiliencePartner {
+  const news = MOCK_NEWS_SENTIMENT[row.code]
+  const sent = news?.sent ?? (risk_level === "high" ? -0.25 : 0.22)
+  const policy = news?.policy ?? (risk_level === "high" ? 0.62 : 0.25)
+  const note = news?.note ?? "Recent bilateral pharma/trade coverage"
+  const sentLabel = sent >= 0.2 ? "positive" : sent <= -0.12 ? "negative" : "neutral"
+  const policyLabel = policy < 0.35 ? "low" : policy < 0.55 ? "moderate" : "elevated"
+  return {
+    partnerCode: row.code,
+    partner: row.name,
+    export_share: displayPharmaExportShare(row.code, row.forecast, 2025),
+    import_share: 0.02,
+    pagerank: 0.05,
+    betweenness: 0.03,
+    resilience_score: risk_level === "high" ? 0.35 : 0.72,
+    risk_level,
+    flags: [
+      `Bilateral news sentiment: ${sentLabel} (${sent >= 0 ? "+" : ""}${sent.toFixed(2)} — recent bilateral pharma/trade coverage)`,
+      `Policy/trade friction index: ${policy.toFixed(2)} (${policyLabel}) — ${note}`,
+      ...(risk_level === "high" ? ["Localization pressure index: 0.62 (elevated)"] : []),
+    ],
+    export_forecast: row.forecast,
+    export_change: row.yoy,
+  }
+}
+
+export function mockResilience(_opts: { sector: string; month: string }): TradeResilience {
+  const top_risks = PHARMA_VULNERABLE.map((r) => mockResiliencePartner(r, "high"))
+  const top_opportunities = PHARMA_EXPANSION.map((r) => mockResiliencePartner(r, "low"))
+  const partners = [...top_risks, ...top_opportunities]
+  return {
+    export_hhi: 2282,
+    import_hhi: 787,
+    export_hhi_label: "moderate",
+    import_hhi_label: "competitive",
+    partners,
+    top_risks,
+    top_opportunities,
+    summary:
+      "Vulnerable corridors (localization risk): Saudi Arabia, UAE, Turkey. " +
+      "Expansion opportunities: United States, Germany, United Kingdom.",
+  }
+}
+
+export function mockExplainability({
+  sector: _sector,
+  month: _month,
+  partner,
+}: {
+  sector: string
+  month: string
+  partner?: string
+}): Explainability {
   return {
     attention: [
       { partner: "United States", weight: 0.35 },
-      { partner: "China", weight: 0.28 },
-      { partner: "Germany", weight: 0.22 },
-      { partner: "United Kingdom", weight: 0.15 },
+      { partner: "United Kingdom", weight: 0.12 },
+      { partner: "Brazil", weight: 0.09 },
+      { partner: "South Africa", weight: 0.08 },
+      { partner: "Netherlands", weight: 0.07 },
     ],
     features: [
-      { feature: "GDP Growth", importance: 0.32 },
+      { feature: "Historical Trade Volume", importance: 0.32 },
       { feature: "Trade Sentiment", importance: 0.28 },
-      { feature: "Historical Trade Volume", importance: 0.24 },
-      { feature: "Geographic Distance", importance: 0.16 },
+      { feature: "GDP Growth", importance: 0.22 },
+      { feature: "Geographic Distance", importance: 0.18 },
     ],
-    blurb: `The model predicts a ${partner ? `change for ${partner}` : 'general trend'} based primarily on economic indicators and trade sentiment. GDP growth shows the strongest correlation with export volumes, followed by recent news sentiment analysis.`,
+    blurb: partner
+      ? `Forecast for ${partner} reflects bilateral trade history, FinBERT news sentiment from archived articles, and gravity-model features.`
+      : "Forecasts combine GNN trade flows, bilateral sentiment from news archives, and macro indicators.",
   }
 }

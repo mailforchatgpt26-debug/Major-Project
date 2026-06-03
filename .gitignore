@@ -21,6 +21,15 @@ __pycache__/
 Thumbs.db
 *.log
 
+# Generated / local artifacts
+results/
+logs/
+*.pt.bak
+data/processed/.backup_*/
+
+# IDE / local tooling
+.claude/
+
 # NOTE: data/ and models/ are explicitly NOT ignored to allow full project portability.
 .venv311/
 .venv/

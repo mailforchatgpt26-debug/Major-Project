@@ -93,3 +93,19 @@ export interface SimulationResult {
   partner_share: number   // fraction 0–1: this partner's share of India's total sector exports
   explanation: string
 }
+
+export interface PartnerMonthlySeries {
+  partnerCode: string
+  partner: string
+  flow: "export" | "import"
+  unit: string
+  month_labels: string[]
+  compare_2025: {
+    actual: number[]
+    forecast: number[]
+    actual_chart?: number[]
+    forecast_chart?: number[]
+  }
+  trend: Array<{ year: number; month: number; label: string; value: number }>
+  annual_forecast: Record<string, number>
+}

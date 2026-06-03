@@ -11,8 +11,9 @@ import sys
 from pathlib import Path
 import pandas as pd
 import time
-from datetime import datetime
-from typing import Dict, List, Tuple
+import threading
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
 import schedule
 import requests
 
@@ -48,8 +49,48 @@ settings = get_settings()
 _MAX_FETCH_ATTEMPTS = 2
 _RATE_LIMIT_BACKOFF_S = 2   # wait between attempts on 429
 _RATE_LIMIT_COOLDOWN_S = 10  # skip re-fetching a pair for this long after exhausted retries
-_DIRECT_CONNECT_TIMEOUT_S = 8
-_DIRECT_READ_TIMEOUT_S = 50
+_DIRECT_CONNECT_TIMEOUT_S = 15
+_DIRECT_READ_TIMEOUT_S = 60
+_DEFAULT_TIMESPAN = "2weeks"  # GDELT DOC API window for live news
+_NEWS_LOOKBACK_DAYS = 14          # GDELT live fetch window
+_HISTORICAL_LOOKBACK_DAYS = 56    # local CSV corpus (batch refresh can lag)
+_MIN_DIRECT_INTERVAL_S = 5.5  # GDELT DOC API: one request per 5 seconds per IP
+_MAX_DIRECT_ATTEMPTS = 5
+
+
+def _format_gdelt_date(raw: Optional[object]) -> str:
+    """Normalize GDELT seendate (YYYYMMDD or YYYYMMDDHHMMSS) to YYYY-MM-DD."""
+    if raw is None:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    s = str(raw).strip()
+    if not s or s.lower() == "nan":
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) >= 8:
+        return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+    ts = pd.to_datetime(s, errors="coerce", utc=True)
+    if pd.notna(ts):
+        return ts.strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _lookback_cutoff_date(days: int = _NEWS_LOOKBACK_DAYS) -> datetime:
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
+
+def _article_within_lookback(date_value: Optional[object], days: int = _NEWS_LOOKBACK_DAYS) -> bool:
+    if date_value is None:
+        return False
+    ts = pd.to_datetime(str(date_value), errors="coerce", utc=True)
+    if pd.isna(ts):
+        return False
+    return ts.to_pydatetime() >= _lookback_cutoff_date(days)
+
+
+def _filter_last_n_days(articles: List[Dict], days: int = _NEWS_LOOKBACK_DAYS) -> List[Dict]:
+    """Keep articles from the last N days; if none match, return the input list."""
+    recent = [a for a in articles if _article_within_lookback(a.get("date"), days=days)]
+    return recent if recent else articles
 
 
 class GDELTArticleFetcher:
@@ -59,6 +100,9 @@ class GDELTArticleFetcher:
     _cache: Dict[str, Tuple[float, List[Dict]]] = {}
     # {cache_key: timestamp} — tracks when a pair last hit a rate limit ceiling
     _rate_limited: Dict[str, float] = {}
+    _direct_api_lock = threading.Lock()
+    _fetch_lock = threading.Lock()
+    _last_direct_request_at: float = 0.0
 
     CACHE_TTL = 1800  # 30 minutes
 
@@ -73,57 +117,129 @@ class GDELTArticleFetcher:
             {
                 "url":            row.get("url", ""),
                 "title":          row.get("title", ""),
-                "date":           row.get("seendate", datetime.now().strftime("%Y%m%d")),
+                "date":           _format_gdelt_date(row.get("seendate") or row.get("date")),
                 "domain":         row.get("domain", ""),
                 "language":       row.get("language", "en"),
                 "country_1_iso3": country1,
                 "country_2_iso3": country2,
                 "sentiment":      0.0,
-                "fetched_at":     datetime.now().isoformat(),
+                "fetched_at":     datetime.now(timezone.utc).isoformat(),
             }
             for row in rows
         ]
 
-    def _direct_gdelt_artlist(self, query: str, max_articles: int) -> List[Dict]:
-        """Fallback to raw GDELT endpoint when gdeltdoc path times out."""
+    def _throttle_direct_api(self) -> None:
+        elapsed = time.time() - GDELTArticleFetcher._last_direct_request_at
+        if elapsed < _MIN_DIRECT_INTERVAL_S:
+            time.sleep(_MIN_DIRECT_INTERVAL_S - elapsed)
+
+    def _direct_gdelt_artlist(
+        self,
+        query: str,
+        max_articles: int,
+        timespan: str = _DEFAULT_TIMESPAN,
+    ) -> List[Dict]:
+        """Fetch via GDELT DOC API (works without gdeltdoc / BigQuery)."""
         params = {
             "query": query,
             "mode": "artlist",
             "format": "json",
             "maxrecords": str(min(max_articles, 250)),
             "sort": "datedesc",
+            "timespan": timespan,
         }
-        # Use a dedicated Session.request call so this fallback is not affected
-        # by gdeltdoc's monkey-patch on requests.get.
-        with requests.Session() as session:
-            resp = session.request(
-                "GET",
-                "https://api.gdeltproject.org/api/v2/doc/doc",
-                params=params,
-                headers={"User-Agent": "trade-forecast-news-fetcher/1.0"},
-                timeout=(_DIRECT_CONNECT_TIMEOUT_S, _DIRECT_READ_TIMEOUT_S),
-            )
-        resp.raise_for_status()
-        payload = resp.json()
-        articles = payload.get("articles", [])
-        return articles if isinstance(articles, list) else []
+
+        last_error: Optional[Exception] = None
+        for attempt in range(_MAX_DIRECT_ATTEMPTS):
+            try:
+                with GDELTArticleFetcher._direct_api_lock:
+                    self._throttle_direct_api()
+                    with requests.Session() as session:
+                        resp = session.request(
+                            "GET",
+                            "https://api.gdeltproject.org/api/v2/doc/doc",
+                            params=params,
+                            headers={"User-Agent": "trade-forecast-news-fetcher/1.0"},
+                            timeout=_DIRECT_READ_TIMEOUT_S,
+                        )
+                    GDELTArticleFetcher._last_direct_request_at = time.time()
+            except requests.exceptions.Timeout as exc:
+                last_error = exc
+                logger.warning(
+                    f"GDELT request timed out (attempt {attempt + 1}/{_MAX_DIRECT_ATTEMPTS})"
+                )
+                time.sleep(_MIN_DIRECT_INTERVAL_S * (attempt + 1))
+                continue
+
+            body = (resp.text or "").strip()
+            if resp.status_code == 429 or "Please limit requests" in body:
+                last_error = RuntimeError("GDELT rate limit")
+                logger.warning(
+                    f"GDELT rate limit hit (attempt {attempt + 1}/{_MAX_DIRECT_ATTEMPTS}), waiting..."
+                )
+                time.sleep(max(12.0, _MIN_DIRECT_INTERVAL_S * (attempt + 2)))
+                continue
+
+            resp.raise_for_status()
+            if not body.startswith("{"):
+                last_error = ValueError(f"Unexpected GDELT response: {body[:120]}")
+                time.sleep(_MIN_DIRECT_INTERVAL_S)
+                continue
+
+            payload = resp.json()
+            articles = payload.get("articles", [])
+            return articles if isinstance(articles, list) else []
+
+        if last_error:
+            raise last_error
+        return []
+
+    def _fetch_via_direct_api(
+        self,
+        query: str,
+        country1: str,
+        country2: str,
+        max_articles: int,
+        cache_key: str,
+        timespan: str = _DEFAULT_TIMESPAN,
+    ) -> List[Dict]:
+        raw_articles = self._direct_gdelt_artlist(query, max_articles, timespan=timespan)
+        articles = _filter_last_n_days(
+            self._normalize_articles(raw_articles, country1, country2)
+        )
+        GDELTArticleFetcher._cache[cache_key] = (time.time(), articles)
+        logger.info(
+            f"Direct GDELT API returned {len(articles)} articles for {country1}-{country2} "
+            f"(timespan={timespan})"
+        )
+        return articles
 
     def fetch_articles_for_country_pair(
         self,
         country1: str,
         country2: str,
         max_articles: int = 10,
+        timespan: str = _DEFAULT_TIMESPAN,
     ) -> List[Dict]:
         """
-        Fetch recent news articles mentioning both countries via gdeltdoc.
-        Sentiment scoring is left to FinBERT downstream — GDELT artlist has no tone field.
+        Fetch recent news articles (default: last two weeks) mentioning both countries.
+        Uses gdeltdoc when installed; otherwise the public GDELT DOC API.
         """
-        if not GDELTDOC_AVAILABLE or self._gd is None:
-            logger.warning("gdeltdoc not installed — pip install gdeltdoc")
-            return []
+        cache_key = f"{country1}-{country2}-{max_articles}-{timespan}"
 
-        cache_key = f"{country1}-{country2}-{max_articles}"
+        with GDELTArticleFetcher._fetch_lock:
+            return self._fetch_articles_for_country_pair_locked(
+                country1, country2, max_articles, timespan, cache_key
+            )
 
+    def _fetch_articles_for_country_pair_locked(
+        self,
+        country1: str,
+        country2: str,
+        max_articles: int,
+        timespan: str,
+        cache_key: str,
+    ) -> List[Dict]:
         # Skip pairs that recently exhausted rate-limit retries
         backoff_ts = GDELTArticleFetcher._rate_limited.get(cache_key)
         if backoff_ts and time.time() - backoff_ts < _RATE_LIMIT_COOLDOWN_S:
@@ -140,19 +256,34 @@ class GDELTArticleFetcher:
 
         c1_name = ISO3_TO_NAME.get(country1, country1)
         c2_name = ISO3_TO_NAME.get(country2, country2)
+        # GDELT DOC syntax: parentheses only around OR groups; terms are ANDed by space.
         query = (
             f'"{c1_name}" "{c2_name}" '
-            "((pharma OR pharmaceutical OR medicine OR drug) AND (trade OR export OR import))"
+            "(pharma OR pharmaceutical OR medicine OR drug) "
+            "(trade OR export OR import)"
         )
+
+        if not GDELTDOC_AVAILABLE or self._gd is None:
+            try:
+                return self._fetch_via_direct_api(
+                    query, country1, country2, max_articles, cache_key, timespan=timespan
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Direct GDELT API failed for {country1}-{country2}: {type(e).__name__}: {e}"
+                )
+                return []
 
         for attempt in range(_MAX_FETCH_ATTEMPTS):
             try:
-                f = Filters(timespan="7d", num_records=min(max_articles, 250), language="English")
+                f = Filters(timespan=timespan, num_records=min(max_articles, 250), language="English")
                 # Insert raw boolean query directly — keyword= wraps the whole string in
                 # extra outer quotes, turning it into an exact-phrase match that returns 0 results.
                 f.query_params.insert(0, f"{query} ")
                 df = self._gd.article_search(f)
-                articles = self._normalize_articles(df.to_dict(orient="records"), country1, country2)
+                articles = _filter_last_n_days(
+                    self._normalize_articles(df.to_dict(orient="records"), country1, country2)
+                )
 
                 GDELTArticleFetcher._cache[cache_key] = (time.time(), articles)
                 return articles
@@ -173,11 +304,9 @@ class GDELTArticleFetcher:
             except Exception as e:
                 logger.warning(f"gdeltdoc error for {country1}-{country2}: {type(e).__name__}: {e} — trying direct GDELT API")
                 try:
-                    raw_articles = self._direct_gdelt_artlist(query, max_articles)
-                    articles = self._normalize_articles(raw_articles, country1, country2)
-                    GDELTArticleFetcher._cache[cache_key] = (time.time(), articles)
-                    logger.info(f"Direct GDELT fallback returned {len(articles)} articles for {country1}-{country2}")
-                    return articles
+                    return self._fetch_via_direct_api(
+                        query, country1, country2, max_articles, cache_key, timespan=timespan
+                    )
                 except Exception as fallback_error:
                     logger.warning(
                         f"Direct GDELT fallback failed for {country1}-{country2}: "
@@ -190,13 +319,26 @@ class GDELTArticleFetcher:
     def fetch_general_trade_articles(
         self,
         max_articles: int = 20,
+        timespan: str = _DEFAULT_TIMESPAN,
     ) -> List[Dict]:
-        """Fetch recent India trade/pharma news without constraining to one partner pair."""
-        if not GDELTDOC_AVAILABLE or self._gd is None:
-            logger.warning("gdeltdoc not installed — pip install gdeltdoc")
-            return []
+        """Fetch India trade/pharma news from the last two weeks (no single partner filter)."""
+        cache_key = f"IND-GENERAL-{max_articles}-{timespan}"
+        with GDELTArticleFetcher._fetch_lock:
+            return self._fetch_general_trade_articles_locked(
+                max_articles, timespan, cache_key
+            )
 
-        cache_key = f"IND-GENERAL-{max_articles}"
+    def _fetch_general_trade_articles_locked(
+        self,
+        max_articles: int,
+        timespan: str,
+        cache_key: str,
+    ) -> List[Dict]:
+        query = (
+            '"India" '
+            "(pharma OR pharmaceutical OR medicine OR drug) "
+            "(trade OR export OR import)"
+        )
         cached = GDELTArticleFetcher._cache.get(cache_key)
         if cached:
             ts, articles = cached
@@ -204,19 +346,26 @@ class GDELTArticleFetcher:
                 logger.debug("Cache hit for IND general trade feed")
                 return articles
 
+        if not GDELTDOC_AVAILABLE or self._gd is None:
+            try:
+                return self._fetch_via_direct_api(
+                    query, "IND", "WLD", max_articles, cache_key, timespan=timespan
+                )
+            except Exception as e:
+                logger.warning(f"Direct GDELT API failed for IND general feed: {type(e).__name__}: {e}")
+                return []
+
         for attempt in range(_MAX_FETCH_ATTEMPTS):
             try:
-                f = Filters(timespan="3d", num_records=min(max_articles, 250), language="English")
-                query = (
-                    '"India" '
-                    "((pharma OR pharmaceutical OR medicine OR drug) AND (trade OR export OR import))"
-                )
+                f = Filters(timespan=timespan, num_records=min(max_articles, 250), language="English")
                 f.query_params.insert(
                     0,
                     query
                 )
                 df = self._gd.article_search(f)
-                articles = self._normalize_articles(df.to_dict(orient="records"), "IND", "WLD")
+                articles = _filter_last_n_days(
+                    self._normalize_articles(df.to_dict(orient="records"), "IND", "WLD")
+                )
                 GDELTArticleFetcher._cache[cache_key] = (time.time(), articles)
                 return articles
             except RateLimitError:
@@ -232,11 +381,9 @@ class GDELTArticleFetcher:
             except Exception as e:
                 logger.warning(f"gdeltdoc error for IND general feed: {type(e).__name__}: {e} — trying direct GDELT API")
                 try:
-                    raw_articles = self._direct_gdelt_artlist(query, max_articles)
-                    articles = self._normalize_articles(raw_articles, "IND", "WLD")
-                    GDELTArticleFetcher._cache[cache_key] = (time.time(), articles)
-                    logger.info(f"Direct GDELT fallback returned {len(articles)} articles for IND general feed")
-                    return articles
+                    return self._fetch_via_direct_api(
+                        query, "IND", "WLD", max_articles, cache_key, timespan=timespan
+                    )
                 except Exception as fallback_error:
                     logger.warning(
                         "Direct GDELT fallback failed for IND general feed: "
@@ -375,6 +522,23 @@ class GDELTArticleFetcher:
         )
         combined.to_csv(sentiment_file, index=False)
         logger.info(f"✓ articles_with_sentiment.csv updated ({len(combined)} total rows)")
+
+        try:
+            import subprocess
+
+            project_root = Path(__file__).resolve().parents[2]
+            script = project_root / "scripts" / "sync_mock_news_to_dashboard.py"
+            if script.exists():
+                subprocess.run(
+                    [sys.executable, str(script)],
+                    cwd=str(project_root),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                logger.info("✓ Dashboard mock news fallback synced from articles CSV")
+        except Exception as e:
+            logger.warning(f"Mock news sync skipped: {e}")
 
         # Regenerate bilateral_sentiment.csv from all scored articles
         try:

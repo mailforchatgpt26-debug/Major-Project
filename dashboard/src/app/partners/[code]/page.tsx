@@ -75,7 +75,7 @@ export default function PartnerDetailsPage() {
                 <div>Actual {partnerPrediction?.export_actual_year ?? "2025"}: {fmtUsdM(partnerPrediction?.export_actual)}</div>
                 <div>Forecast: {fmtUsdM(partnerPrediction?.export_forecast)}</div>
                 <div>
-                  Change:{" "}
+                  YoY change (vs FY2024):{" "}
                   <span style={{ color: (partnerPrediction?.export_change ?? 0) >= 0 ? "var(--color-chart-1)" : "var(--destructive)" }}>
                     {fmtPct(partnerPrediction?.export_change)}
                   </span>
@@ -88,7 +88,7 @@ export default function PartnerDetailsPage() {
                 <div>Actual {partnerPrediction?.import_actual_year ?? "2025"}: {fmtUsdM(partnerPrediction?.import_actual)}</div>
                 <div>Forecast: {fmtUsdM(partnerPrediction?.import_forecast)}</div>
                 <div>
-                  Change:{" "}
+                  Change vs actual:{" "}
                   <span style={{ color: (partnerPrediction?.import_change ?? 0) >= 0 ? "var(--color-chart-1)" : "var(--destructive)" }}>
                     {fmtPct(partnerPrediction?.import_change)}
                   </span>

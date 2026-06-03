@@ -2,7 +2,7 @@
 
 import { create } from "zustand"
 import type { AlertItem, Explainability, NewsArticle, Prediction, SimulationResult, TradeResilience } from "@/lib/types"
-import { mockAlerts, mockExplainability, mockNews, mockPredictions } from "@/lib/mock"
+import { mockAlerts, mockExplainability, mockNews, mockPredictions, mockResilience } from "@/lib/mock"
 import { apiFetchInit, getApiBaseUrl } from "@/lib/api-base"
 
 type State = {
@@ -245,7 +245,12 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
       set((state) => ({ resilience, loading: { ...state.loading, resilience: false } }))
     } catch (error) {
       console.error("Failed to load resilience:", error)
-      set((state) => ({ loading: { ...state.loading, resilience: false } }))
+      const fallbackResilience = mockResilience({ sector, month })
+      set((state) => ({
+        resilience: fallbackResilience,
+        loading: { ...state.loading, resilience: false },
+      }))
+      console.log("⚠ Using mock resilience (backend unavailable)")
     }
   },
 

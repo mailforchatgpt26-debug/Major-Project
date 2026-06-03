@@ -1,6 +1,6 @@
 {
   "num_nodes": 220,
-  "num_edges": 45276,
+  "num_edges": 45260,
   "num_countries": 220,
   "years": [
     2011,
@@ -24,6 +24,6 @@
   ],
   "train_edges": 38923,
   "val_edges": 3141,
-  "test_edges": 3212,
-  "india_export_edges": 34169
+  "test_edges": 3196,
+  "india_export_edges": 34149
 }

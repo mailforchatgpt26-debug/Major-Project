@@ -4,8 +4,64 @@ GNN Architecture - Updated for your feature dimensions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATConv
+from torch_geometric.nn import GATConv, GCNConv
 from src.models.causal_gnn import StructuralGravityFramework
+
+
+class TradeGCN(nn.Module):
+    """Graph Convolutional Network for trade edge prediction (structure + edge MLP)."""
+
+    def __init__(
+        self,
+        num_node_features: int = 4,
+        num_edge_features: int = 10,
+        hidden_dim: int = 128,
+        num_layers: int = 3,
+        dropout: float = 0.2,
+    ):
+        super().__init__()
+        self.dropout = dropout
+        self.num_layers = num_layers
+        self.convs = nn.ModuleList()
+        self.bns = nn.ModuleList()
+
+        self.convs.append(GCNConv(num_node_features, hidden_dim))
+        self.bns.append(nn.BatchNorm1d(hidden_dim))
+        for _ in range(num_layers - 1):
+            self.convs.append(GCNConv(hidden_dim, hidden_dim))
+            self.bns.append(nn.BatchNorm1d(hidden_dim))
+
+        mlp_in = hidden_dim * 2 + num_edge_features
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(mlp_in, hidden_dim * 2),
+            nn.BatchNorm1d(hidden_dim * 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, 1),
+        )
+
+    def forward(self, x, edge_index, edge_attr):
+        x = x.float()
+        edge_attr = edge_attr.float()
+        h = x
+        for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
+            h = conv(h, edge_index)
+            if h.shape[0] > 1:
+                h = bn(h)
+            if i < len(self.convs) - 1:
+                h = F.elu(h)
+                h = F.dropout(h, p=self.dropout, training=self.training)
+        h = F.elu(h)
+        row, col = edge_index
+        edge_emb = torch.cat([h[row], h[col], edge_attr], dim=1)
+        return self.edge_mlp(edge_emb).squeeze(-1)
 
 
 class TradeGNN(nn.Module):

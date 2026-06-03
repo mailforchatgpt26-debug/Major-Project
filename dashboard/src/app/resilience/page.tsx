@@ -6,6 +6,7 @@ import { Header } from "@/components/header"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { useDashboardStore } from "@/components/dashboard/store"
 import type { AlertItem, ResiliencePartner, TradeResilience } from "@/lib/types"
+import { formatPharmaExportSharePct } from "@/lib/pharma-constants"
 import { apiFetchInit, getApiBaseUrl } from "@/lib/api-base"
 
 const FIXED_MONTH = "2025-01"
@@ -15,6 +16,25 @@ const FIXED_MONTH = "2025-01"
 /** Translate raw backend flag strings into plain English. Returns null to suppress internal flags. */
 function humaniseFlag(flag: string): string | null {
   if (flag.includes("Low model confidence")) return null
+  if (flag.startsWith("Model inference:")) return flag
+  if (flag.startsWith("Pharma export market size:")) return flag
+  if (flag.startsWith("Historical export growth CAGR")) return flag
+  if (flag.startsWith("Forecast export growth:")) return flag
+  if (flag.startsWith("Import dependency index:")) return flag
+  if (flag.startsWith("Regulatory stability score:")) return flag
+  if (flag.startsWith("Localization pressure index:")) return flag
+  if (flag.startsWith("Likely decline period:")) return flag
+  if (flag.startsWith("Partner→India supply growth")) return flag
+  if (flag.startsWith("Projected import-substitution")) return flag
+  if (flag.startsWith("Trade-policy headwind")) return flag
+  if (flag.startsWith("Market share signal:")) return flag
+  if (flag.startsWith("India pharma import reliance")) return flag
+  if (flag.startsWith("Export YoY change:")) return flag
+  if (flag.startsWith("5-yr export CAGR")) return flag
+  if (flag.startsWith("Trade volatility CV:")) return flag
+  if (flag.startsWith("Bilateral news sentiment:")) return flag
+  if (flag.startsWith("Policy/trade friction index:")) return flag
+  if (flag.startsWith("Combined signal:")) return flag
   if (flag.includes("High export dependency"))
     return flag.replace("High export dependency", "India heavily relies on this market")
   if (flag.includes("Elevated export concentration"))
@@ -63,7 +83,7 @@ function PartnerCard({ p, variant }: { p: ResiliencePartner; variant: "risk" | "
   const changePct = p.export_change * 100
   const changeLabel = changePct >= 0 ? `+${changePct.toFixed(1)}%` : `${changePct.toFixed(1)}%`
   const changeColor = changePct >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
-  const exportSharePct = (p.export_share * 100).toFixed(1)
+  const exportSharePct = formatPharmaExportSharePct(p.partnerCode, p.export_forecast, p.export_share)
   const visibleFlags = (p.flags ?? []).map(humaniseFlag).filter(Boolean) as string[]
 
   const borderColor = variant === "risk"

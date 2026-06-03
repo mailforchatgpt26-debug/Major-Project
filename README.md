@@ -108,8 +108,11 @@ cd gnn-trade-forecasting
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install Python dependencies
+# Install Python dependencies (API / production)
 pip install -r requirements.txt
+
+# Optional: training, ETL, plotting, BigQuery
+pip install -r requirements-dev.txt
 ```
 ### 2. Frontend Setup
 
@@ -196,6 +199,36 @@ Launch the visualization interface.
 cd dashboard/src
 npm run dev
 ```
+
+## Deploy on Railway (API)
+
+This repo is set up to run the **FastAPI backend** on [Railway](https://railway.app). Deploy the **Next.js dashboard** separately (e.g. Vercel) and point it at your Railway API URL.
+
+### Prerequisites
+
+1. **`models/gravity_gnn_working.pt`** must be present (train with `python scripts/train_gravity_gnn.py` or copy your checkpoint into `models/`).
+2. Processed trade data under **`data/processed/`** (included in the repo).
+3. Python **3.11** (`runtime.txt` / `.python-version`).
+
+### Steps
+
+1. Create a new Railway project from this repository.
+2. Railway detects `railway.toml` / `Procfile` and installs `requirements.txt`.
+3. Set **Variables** (see `.env.example`):
+   - `DEVICE=cpu`
+   - `CORS_ORIGINS` — JSON array with your dashboard origin(s)
+   - Optional: `DATABASE_URL`, `REDIS_HOST`, etc.
+4. Deploy. Health check: `GET /health`.
+5. Set the dashboard `NEXT_PUBLIC_API_URL` (or equivalent) to your Railway public URL.
+
+**Note:** First deploy can take several minutes (PyTorch + transformers). If the build times out, increase the build timeout in Railway settings.
+
+```bash
+# Local smoke test (same command Railway uses)
+PYTHONPATH=. uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+```
+
+---
 
 ## 💻 Tech Stack
 

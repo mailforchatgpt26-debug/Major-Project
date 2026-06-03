@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useDashboardStore } from "./dashboard/store"
+import { pharmaNationalExportShare } from "@/lib/pharma-constants"
 import {
   X,
   Play,
@@ -227,10 +228,18 @@ export function PolicyScenarioModal() {
   const displayDelta = r ? Math.abs(displayCounterfactual - displayBaseline) : 0
   const tradeDir = r && r.pct_impact >= 0 ? "more" : "less"
 
-  // Partner share: fraction of India's total forecasted exports going to this partner.
-  // Computed from predictions store (annualised GNN forecasts) — avoids monthly-row inflation.
-  const totalForecast = predictions.reduce((s, p) => s + p.export_forecast, 0)
-  const partnerShareFrontend = totalForecast > 0 ? displayBaseline / totalForecast : 0
+  const partnerPred = predictions.find((p) => p.partnerCode === selectedPartner)
+  const portfolioForecast = predictions.reduce((s, p) => s + p.export_forecast, 0)
+  const partnerShareFrontend =
+    sector === "pharma"
+      ? pharmaNationalExportShare(
+          displayBaseline,
+          2025,
+          partnerPred?.export_actual ?? null
+        )
+      : portfolioForecast > 0
+      ? displayBaseline / portfolioForecast
+      : 0
 
   // ── floating trigger button ──
   const trigger = (
@@ -591,7 +600,8 @@ export function PolicyScenarioModal() {
                           <span className="font-semibold text-foreground">
                             {(partnerShareFrontend * 100).toFixed(1)}%
                           </span>{" "}
-                          of India's forecasted {sector === "pharma" ? "pharma" : sector} exports.
+                          of India&apos;s{" "}
+                          {sector === "pharma" ? "national pharma" : `forecasted ${sector}`} exports.
                           This scenario shifts that portfolio by{" "}
                           <span className="font-semibold text-foreground">
                             {Math.abs(r.pct_impact * partnerShareFrontend).toFixed(2)}%

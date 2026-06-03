@@ -3,8 +3,9 @@
 import React, { useMemo, useState } from "react"
 import type { Prediction, Explainability } from "@/lib/types"
 import { useDashboardStore } from "@/components/dashboard/store"
+import { Partner2025CompareCharts } from "@/components/partner-2025-compare-chart"
 
-const FORECAST_YEARS = ["2025", "2026", "2027", "2028"]
+const FORECAST_YEARS = ["2025", "2026", "2027", "2028", "2029", "2030"]
 
 type Props = {
   data: Prediction[]
@@ -24,7 +25,8 @@ function fmtVal(v?: number | null): React.ReactNode {
 
 function fmtChange(c: number) {
   const color = c >= 0 ? "var(--color-chart-1)" : "var(--destructive)"
-  return <span style={{ color }}>{(c * 100).toFixed(1)}%</span>
+  const sign = c >= 0 ? "+" : ""
+  return <span style={{ color }}>{sign}{(c * 100).toFixed(1)}%</span>
 }
 
 function fmtImportYoy(c: number, importForecast?: number | null) {
@@ -44,30 +46,6 @@ function fmtImportYoy(c: number, importForecast?: number | null) {
   return fmtChange(c)
 }
 
-function computeAbsChangeFromPct(forecast?: number | null, pctChange?: number | null): number | null {
-  if (forecast == null || !Number.isFinite(forecast) || pctChange == null || !Number.isFinite(pctChange)) {
-    return null
-  }
-  // pctChange = (forecast - base) / base  =>  base = forecast / (1 + pctChange)
-  if (pctChange <= -0.999) return null
-  const base = forecast / (1 + pctChange)
-  const delta = forecast - base
-  return Number.isFinite(delta) ? delta : null
-}
-
-function fmtAbsChange(delta?: number | null) {
-  if (delta == null) return <span className="text-muted-foreground/40">—</span>
-  const sign = delta >= 0 ? "+" : "−"
-  const abs = Math.abs(delta)
-  const color = delta >= 0 ? "var(--color-chart-1)" : "var(--destructive)"
-  return (
-    <span style={{ color }}>
-      {sign}
-      {fmtVal(abs)}M
-    </span>
-  )
-}
-
 function MiniBar({ value, color }: { value: number; color: string }) {
   return (
     <div className="flex items-center gap-2">
@@ -82,6 +60,8 @@ function MiniBar({ value, color }: { value: number; color: string }) {
 function InlineExplainability({
   explainability,
   partnerName,
+  partnerCode,
+  showCompare2025,
   colSpan,
   seasonalityLabel,
   peakMonth,
@@ -89,11 +69,15 @@ function InlineExplainability({
 }: {
   explainability?: Explainability
   partnerName: string
+  partnerCode: string
+  showCompare2025?: boolean
   colSpan: number
   seasonalityLabel?: string
   peakMonth?: string
   lowMonth?: string
 }) {
+  const { sector } = useDashboardStore()
+
   if (!explainability) {
     return (
       <td colSpan={colSpan} className="px-4 py-3 bg-accent/20 border-b">
@@ -129,6 +113,9 @@ function InlineExplainability({
         </div>
       </div>
       <p className="text-xs text-muted-foreground mt-3 leading-relaxed">{explainability.blurb}</p>
+      {showCompare2025 ? (
+        <Partner2025CompareCharts partnerCode={partnerCode} sector={sector} />
+      ) : null}
     </td>
   )
 }
@@ -139,8 +126,10 @@ export function PredictionsTable({ data, selectedPartner, explainability, onRowS
     const y = month.split("-")[0]
     return FORECAST_YEARS.includes(y) ? y : FORECAST_YEARS[0]
   })()
-  const showActual2025 = forecastYear === "2025"
-  const tableColCount = showActual2025 ? 7 : 5
+  const showYoYChange = forecastYear !== "2025"
+  const exportColSpan = showYoYChange ? 2 : 1
+  const importColSpan = showYoYChange ? 2 : 1
+  const tableColCount = 1 + exportColSpan + importColSpan
 
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
     key: "export_forecast",
@@ -203,39 +192,46 @@ export function PredictionsTable({ data, selectedPartner, explainability, onRowS
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm table-fixed">
+          <colgroup>
+            <col className={showYoYChange ? "w-[34%]" : "w-[42%]"} />
+            <col className={showYoYChange ? "w-[16%]" : "w-[29%]"} />
+            {showYoYChange ? <col className="w-[16%]" /> : null}
+            <col className={showYoYChange ? "w-[17%]" : "w-[29%]"} />
+            {showYoYChange ? <col className="w-[17%]" /> : null}
+          </colgroup>
           <thead className="bg-secondary/60">
             <tr>
               <Th onClick={() => handleSort("partner")} active={sort.key === "partner"} dir={sort.dir}>
                 Country
               </Th>
-              <th colSpan={showActual2025 ? 3 : 2} className="px-3 py-1 text-center text-xs font-semibold text-green-600 dark:text-green-400 border-l border-border">
+              <th
+                colSpan={exportColSpan}
+                className="px-3 py-1 text-center text-xs font-semibold text-green-600 dark:text-green-400 border-l border-border"
+              >
                 India → Partner (Export)
               </th>
-              <th colSpan={showActual2025 ? 3 : 2} className="px-3 py-1 text-center text-xs font-semibold text-blue-600 dark:text-blue-400 border-l border-border">
+              <th
+                colSpan={importColSpan}
+                className="px-3 py-1 text-center text-xs font-semibold text-blue-600 dark:text-blue-400 border-l border-border"
+              >
                 Partner → India (Import)
               </th>
             </tr>
             <tr className="text-xs">
               <th className="px-3 pb-2 text-left font-normal text-muted-foreground" />
-              {showActual2025 ? (
-                <Th onClick={() => handleSort("export_actual")} active={sort.key === "export_actual"} dir={sort.dir} className="border-l border-border">
-                  Actual 2025
-                </Th>
-              ) : null}
-              <Th onClick={() => handleSort("export_forecast")} active={sort.key === "export_forecast"} dir={sort.dir}>
+              <Th onClick={() => handleSort("export_forecast")} active={sort.key === "export_forecast"} dir={sort.dir} className="border-l border-border text-right">
                 {forecastYear} Fcst
               </Th>
-              <th className="px-3 pb-2 text-left font-normal text-muted-foreground">Abs Change</th>
-              {showActual2025 ? (
-                <Th onClick={() => handleSort("import_actual")} active={sort.key === "import_actual"} dir={sort.dir} className="border-l border-border">
-                  Actual 2025
-                </Th>
+              {showYoYChange ? (
+                <th className="px-3 pb-2 text-right font-normal text-muted-foreground">YoY %</th>
               ) : null}
-              <Th onClick={() => handleSort("import_forecast")} active={sort.key === "import_forecast"} dir={sort.dir}>
+              <Th onClick={() => handleSort("import_forecast")} active={sort.key === "import_forecast"} dir={sort.dir} className="border-l border-border text-right">
                 {forecastYear} Fcst
               </Th>
-              <th className="px-3 pb-2 text-left font-normal text-muted-foreground">Abs Change</th>
+              {showYoYChange ? (
+                <th className="px-3 pb-2 text-right font-normal text-muted-foreground">YoY %</th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -260,36 +256,32 @@ export function PredictionsTable({ data, selectedPartner, explainability, onRowS
                           {row.partner}
                         </span>
                       </td>
-                      {showActual2025 ? (
-                        <td className="px-3 py-2 text-muted-foreground border-l border-border">
-                          {fmtVal(row.export_actual)}
-                        </td>
-                      ) : null}
-                      <td className="px-3 py-2 font-medium text-green-700 dark:text-green-400">
+                      <td className="px-3 py-2 font-medium text-green-700 dark:text-green-400 border-l border-border text-right tabular-nums">
                         {fmtVal(row.export_forecast)}
                       </td>
-                      <td className="px-3 py-2">
-                        {fmtAbsChange(computeAbsChangeFromPct(row.export_forecast, row.export_change))}
-                      </td>
-                      {showActual2025 ? (
-                        <td className="px-3 py-2 text-muted-foreground border-l border-border">
-                          {fmtVal(row.import_actual)}
+                      {showYoYChange ? (
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {fmtChange(row.export_change)}
                         </td>
                       ) : null}
-                      <td className="px-3 py-2 font-medium text-blue-700 dark:text-blue-400">
+                      <td className="px-3 py-2 font-medium text-blue-700 dark:text-blue-400 border-l border-border text-right tabular-nums">
                         {fmtVal(row.import_forecast)}
                       </td>
-                      <td className="px-3 py-2">
-                        {fmtAbsChange(computeAbsChangeFromPct(row.import_forecast, row.import_change))}
-                      </td>
+                      {showYoYChange ? (
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {fmtImportYoy(row.import_change, row.import_forecast)}
+                        </td>
+                      ) : null}
                     </tr>
                     {isSelected && (
                       <tr>
                         <InlineExplainability
                           explainability={explainability}
                           partnerName={row.partner}
+                          partnerCode={row.partnerCode}
+                          showCompare2025={forecastYear === "2025"}
                           colSpan={tableColCount}
-                          seasonalityLabel={showActual2025 ? "Actual 2025 seasonality (dataset)" : `${forecastYear} seasonality (historical pattern)`}
+                          seasonalityLabel={forecastYear === "2025" ? "2025 forecast seasonality" : `${forecastYear} seasonality (historical pattern)`}
                           peakMonth={row.export_peak_month}
                           lowMonth={row.export_low_month}
                         />
@@ -320,10 +312,10 @@ function Th({
       role="columnheader"
       scope="col"
       onClick={onClick}
-      className={`px-3 py-2 text-left font-medium select-none ${className}`}
+      className={`px-3 py-2 font-medium select-none ${className}`}
       aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
     >
-      <button className="inline-flex items-center gap-1 hover:underline">
+      <button className={`inline-flex items-center gap-1 hover:underline w-full ${className.includes("text-right") ? "justify-end" : ""}`}>
         {children}
         {active ? <span aria-hidden>{dir === "asc" ? "↑" : "↓"}</span> : null}
       </button>

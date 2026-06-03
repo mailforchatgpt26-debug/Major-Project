@@ -1,9 +1,29 @@
 "use client"
 
 import type { TradeResilience, ResiliencePartner } from "@/lib/types"
+import { formatPharmaExportSharePct } from "@/lib/pharma-constants"
 
 function humaniseFlag(flag: string): string | null {
   if (flag.includes("Low model confidence")) return null
+  if (flag.startsWith("Model inference:")) return flag
+  if (flag.startsWith("Pharma export market size:")) return flag
+  if (flag.startsWith("Historical export growth CAGR")) return flag
+  if (flag.startsWith("Forecast export growth:")) return flag
+  if (flag.startsWith("Import dependency index:")) return flag
+  if (flag.startsWith("Regulatory stability score:")) return flag
+  if (flag.startsWith("Localization pressure index:")) return flag
+  if (flag.startsWith("Likely decline period:")) return flag
+  if (flag.startsWith("Partner→India supply growth")) return flag
+  if (flag.startsWith("Projected import-substitution")) return flag
+  if (flag.startsWith("Trade-policy headwind")) return flag
+  if (flag.startsWith("Market share signal:")) return flag
+  if (flag.startsWith("India pharma import reliance")) return flag
+  if (flag.startsWith("Export YoY change:")) return flag
+  if (flag.startsWith("5-yr export CAGR")) return flag
+  if (flag.startsWith("Trade volatility CV:")) return flag
+  if (flag.startsWith("Bilateral news sentiment:")) return flag
+  if (flag.startsWith("Policy/trade friction index:")) return flag
+  if (flag.startsWith("Combined signal:")) return flag
   if (flag.includes("High export dependency"))
     return flag.replace("High export dependency", "Heavy reliance on this market")
   if (flag.includes("Elevated export concentration"))
@@ -72,7 +92,10 @@ function PartnerRow({ p, variant }: { p: ResiliencePartner; variant: "risk" | "o
       </div>
 
       <div className="text-muted-foreground">
-        Export share: <span className="text-foreground font-medium">{(p.export_share * 100).toFixed(1)}%</span>
+        Export share:{" "}
+        <span className="text-foreground font-medium">
+          {formatPharmaExportSharePct(p.partnerCode, p.export_forecast, p.export_share)}%
+        </span>
       </div>
 
       {visibleFlags.length > 0 && (
