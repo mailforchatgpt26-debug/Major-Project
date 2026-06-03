@@ -86,7 +86,16 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
         { ...apiFetchInit, signal: AbortSignal.timeout(120000) }
       )
 
-      if (!res.ok) throw new Error(`API returned ${res.status}`)
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try {
+          const body = await res.json()
+          if (body?.detail) detail = String(body.detail)
+        } catch {
+          /* ignore */
+        }
+        throw new Error(detail)
+      }
 
       const predictions = await res.json()
 
@@ -242,7 +251,16 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
         `${getApiBaseUrl()}/api/resilience?sector=${sector}&month=${month}`,
         { ...apiFetchInit, signal: AbortSignal.timeout(120000) }
       )
-      if (!res.ok) throw new Error(`API returned ${res.status}`)
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try {
+          const body = await res.json()
+          if (body?.detail) detail = String(body.detail)
+        } catch {
+          /* ignore */
+        }
+        throw new Error(detail)
+      }
       const resilience = await res.json()
       set((state) => ({ resilience, loading: { ...state.loading, resilience: false } }))
     } catch (error) {

@@ -1367,10 +1367,8 @@ def _generate_predictions_sync(
         #   year=2028 → n=4
         # Using the Oct-2025 graph as the base would make 2025 and 2026 give identical
         # predictions (both n=1) and the "vs actual" comparison would be meaningless.
-            cached_graphs = getattr(app.state, "_cached_graphs", None)
-        if not cached_graphs:
-            _ensure_graph_cache()
-            cached_graphs = getattr(app.state, "_cached_graphs", None)
+        _ensure_graph_cache()
+        cached_graphs = getattr(app.state, "_cached_graphs", None)
         if not cached_graphs:
             raise HTTPException(status_code=503, detail="Graph cache not ready")
 
