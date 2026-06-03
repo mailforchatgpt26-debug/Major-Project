@@ -265,8 +265,8 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
     }))
 
     try {
-      // Keep spinner visible for at least 2–4s so users perceive active fetching.
-      const minDelayMs = 2000 + Math.floor(Math.random() * 2000)
+      // Brief minimum wait so the spinner is visible (max 2s; API may take longer).
+      const minDelayMs = 2000
       const minDelay = new Promise((resolve) => setTimeout(resolve, minDelayMs))
       const fetchPromise = fetch(`${getApiBaseUrl()}/api/v1/simulate`, {
         method: "POST",

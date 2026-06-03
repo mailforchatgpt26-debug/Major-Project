@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useMemo, useState } from "react"
+import { Loader2 } from "lucide-react"
 import type { Prediction, Explainability } from "@/lib/types"
 import { useDashboardStore } from "@/components/dashboard/store"
 import { Partner2025CompareCharts } from "@/components/partner-2025-compare-chart"
@@ -124,7 +125,8 @@ function InlineExplainability({
 }
 
 export function PredictionsTable({ data, selectedPartner, explainability, onRowSelect }: Props) {
-  const { month, setMonth } = useDashboardStore()
+  const { month, setMonth, loading } = useDashboardStore()
+  const loadingPredictions = loading.predictions
   const forecastYear = (() => {
     const y = month.split("-")[0]
     return FORECAST_YEARS.includes(y) ? y : FORECAST_YEARS[0]
@@ -182,8 +184,10 @@ export function PredictionsTable({ data, selectedPartner, explainability, onRowS
             {FORECAST_YEARS.map((y) => (
               <button
                 key={y}
+                type="button"
+                disabled={loadingPredictions}
                 onClick={() => setMonth(`${y}-01`)}
-                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   forecastYear === y ? "bg-primary text-primary-foreground" : "border hover:bg-accent"
                 }`}
               >
@@ -194,8 +198,23 @@ export function PredictionsTable({ data, selectedPartner, explainability, onRowS
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm table-fixed">
+      <div className="relative overflow-x-auto min-h-[280px]">
+        {loadingPredictions && (
+          <div
+            className="absolute inset-0 z-20 flex flex-col items-center justify-start gap-2 pt-10 rounded-lg bg-background/70 backdrop-blur-sm"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <Loader2 className="size-8 animate-spin text-primary" aria-hidden />
+            <p className="text-sm font-medium text-foreground">Loading {forecastYear} forecasts…</p>
+          </div>
+        )}
+        <table
+          className={`w-full text-sm table-fixed transition-opacity duration-150 ${
+            loadingPredictions ? "opacity-30 pointer-events-none select-none" : ""
+          }`}
+        >
           <colgroup>
             <col className={showYoYChange ? "w-[34%]" : "w-[42%]"} />
             <col className={showYoYChange ? "w-[16%]" : "w-[29%]"} />
