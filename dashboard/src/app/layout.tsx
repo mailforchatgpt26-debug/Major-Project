@@ -12,6 +12,9 @@ export const metadata: Metadata = {
   description: 'AI-powered pharma trade forecasting and risk intelligence for India’s bilateral export/import corridors.',
 }
 
+const vercelHosted =
+  process.env.VERCEL === '1' || process.env.NEXT_PUBLIC_VERCEL === '1'
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -21,7 +24,7 @@ export default function RootLayout({
     <html lang="en" className="dark" suppressHydrationWarning>
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
         {children}
-        <Analytics />
+        {vercelHosted ? <Analytics /> : null}
       </body>
     </html>
   )

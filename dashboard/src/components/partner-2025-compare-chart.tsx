@@ -68,6 +68,8 @@ function FlowComparePanel({
     const forecast = compare.forecast ?? []
     const actualBars = compare.actual_chart?.length ? compare.actual_chart : actual
     const forecastBars = compare.forecast_chart?.length ? compare.forecast_chart : forecast
+    const actualTotal = actual.reduce((s, v) => s + v, 0)
+    const forecastTotal = forecast.reduce((s, v) => s + v, 0)
     const chartFloor = (v: number, total: number) => {
       if (v > 0) return v
       if (total <= 0) return 0.4
@@ -78,8 +80,6 @@ function FlowComparePanel({
       const f = chartFloor(forecastBars[i] ?? 0, forecastTotal)
       return { month, Actual: a, Forecast: f }
     })
-    const actualTotal = actual.reduce((s, v) => s + v, 0)
-    const forecastTotal = forecast.reduce((s, v) => s + v, 0)
     const annualDeltaPct =
       actualTotal > 0 ? ((forecastTotal - actualTotal) / actualTotal) * 100 : 0
     const vals = chartData.flatMap((d) => [d.Actual, d.Forecast])
