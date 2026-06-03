@@ -55,7 +55,7 @@ function FlowComparePanel({
 }) {
   const { chartData, actualTotal, forecastTotal, annualDeltaPct, yDomain } = useMemo(() => {
     const compare = series.compare_2025
-    if (!compare?.actual?.length || !compare?.forecast?.length) {
+    if (!compare) {
       return {
         chartData: [],
         actualTotal: 0,
@@ -64,13 +64,18 @@ function FlowComparePanel({
         yDomain: [0, 1] as [number, number],
       }
     }
-    const actual = compare.actual
-    const forecast = compare.forecast
-    const actualBars = compare.actual_chart ?? actual
-    const forecastBars = compare.forecast_chart ?? forecast
+    const actual = compare.actual ?? []
+    const forecast = compare.forecast ?? []
+    const actualBars = compare.actual_chart?.length ? compare.actual_chart : actual
+    const forecastBars = compare.forecast_chart?.length ? compare.forecast_chart : forecast
+    const chartFloor = (v: number, total: number) => {
+      if (v > 0) return v
+      if (total <= 0) return 0.4
+      return Math.max(total * 0.03, 0.4)
+    }
     const chartData = series.month_labels.map((month, i) => {
-      const a = actualBars[i] ?? 0
-      const f = forecastBars[i] ?? 0
+      const a = chartFloor(actualBars[i] ?? 0, actualTotal)
+      const f = chartFloor(forecastBars[i] ?? 0, forecastTotal)
       return { month, Actual: a, Forecast: f }
     })
     const actualTotal = actual.reduce((s, v) => s + v, 0)
@@ -90,7 +95,7 @@ function FlowComparePanel({
     }
   }, [series])
 
-  if (!series.compare_2025?.actual?.length) {
+  if (!series.compare_2025) {
     return (
       <div className="rounded-lg border bg-background/80 p-3">
         <p className="text-xs text-muted-foreground">{title}: comparison data unavailable.</p>

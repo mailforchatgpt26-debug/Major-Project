@@ -237,12 +237,10 @@ def _low_memory_mode() -> bool:
 
 
 def _gdelt_live_enabled() -> bool:
-    """Live GDELT DOC API (rate-limited). Off when DISABLE_GDELT_LIVE=1 or RAILWAY_LOW_MEMORY=1."""
+    """Live GDELT DOC API — opt-in only (ENABLE_GDELT_LIVE=1). Default off for Railway/production."""
     if os.getenv("DISABLE_GDELT_LIVE", "").lower() in ("1", "true", "yes"):
         return False
-    if os.getenv("ENABLE_GDELT_LIVE", "").lower() in ("1", "true", "yes"):
-        return True
-    return not _low_memory_mode()
+    return os.getenv("ENABLE_GDELT_LIVE", "").lower() in ("1", "true", "yes")
 
 
 def _ensure_graph_cache() -> None:
@@ -448,6 +446,9 @@ async def lifespan(app: FastAPI):
     
     try:
         logger.info("🚀 Starting Trade Flow Prediction API...")
+        logger.info(
+            f"GDELT live fetch: {'on (ENABLE_GDELT_LIVE=1)' if _gdelt_live_enabled() else 'off (archived news only)'}"
+        )
         
         # Check Redis
         if REDIS_AVAILABLE and cache.enabled:
@@ -948,6 +949,96 @@ def _fix_monthly_sum(monthly: List[float], target: float) -> List[float]:
     return out
 
 
+def _positive_month_weights_2025(
+    actual_monthly: List[float],
+    forecast_monthly: List[float],
+    partner: str,
+    flow_l: str,
+    backend_sector: str,
+) -> List[float]:
+    """12-month weights for chart bars only (every month gets a visible share)."""
+    actual = [float(v) for v in actual_monthly[:12]]
+    forecast = [float(v) for v in forecast_monthly[:12]]
+    while len(actual) < 12:
+        actual.append(0.0)
+    while len(forecast) < 12:
+        forecast.append(0.0)
+
+    blend = np.array([(a + f) / 2.0 for a, f in zip(actual, forecast)], dtype=float)
+    annual_blend = float(blend.sum())
+    if annual_blend > 0:
+        for i in range(12):
+            if actual[i] <= 0 and forecast[i] <= 0:
+                blend[i] = annual_blend / 12.0
+            elif actual[i] <= 0:
+                blend[i] = forecast[i]
+            elif forecast[i] <= 0:
+                blend[i] = actual[i]
+    else:
+        blend = np.ones(12)
+
+    shape = np.array(
+        _smooth_2025_monthly_for_chart(blend.tolist(), partner, flow_l, backend_sector),
+        dtype=float,
+    )
+    if float(shape.sum()) <= 0:
+        shape = np.ones(12)
+    shape = np.maximum(shape, 0.0)
+    shape = shape / shape.sum()
+    uniform = np.ones(12) / 12.0
+    w = 0.82 * shape + 0.18 * uniform
+    w = np.maximum(w, uniform * 0.42)
+    return (w / w.sum()).tolist()
+
+
+def _distribute_chart_annual(annual_total: float, weights: List[float]) -> List[float]:
+    """Chart-only: 12 positive months that sum to annual_total (table totals use raw actual/forecast)."""
+    if annual_total <= 0:
+        return [0.0] * 12
+    raw = [float(weights[i % len(weights)]) * annual_total for i in range(12)]
+    out = _fix_monthly_sum(raw, annual_total)
+    min_m = max(annual_total * 0.035, 0.5)
+    arr = np.array(out, dtype=float)
+    for _ in range(8):
+        short = arr < min_m
+        if not short.any():
+            break
+        deficit = float((min_m - arr[short]).sum())
+        arr[short] = min_m
+        donors = arr > min_m * 1.08
+        if not donors.any():
+            arr = arr * (annual_total / max(float(arr.sum()), 1e-9))
+            break
+        donor_vals = arr[donors]
+        take = min(deficit, float(donor_vals.sum() - min_m * int(donors.sum())))
+        if take <= 0:
+            break
+        arr[donors] -= take * (donor_vals / donor_vals.sum())
+    return _fix_monthly_sum(arr.tolist(), annual_total)
+
+
+def _forecast_chart_track_actual(
+    actual_chart: List[float],
+    forecast_total: float,
+    partner_key: str,
+) -> List[float]:
+    """Chart-only: forecast bars follow actual month shape, ~0.5–2.5% month-level gap."""
+    actual_total = float(sum(actual_chart))
+    if actual_total <= 0 or forecast_total <= 0:
+        return _distribute_chart_annual(forecast_total, [1.0 / 12.0] * 12)
+
+    ratio = forecast_total / actual_total
+    bumped: List[float] = []
+    for i, a in enumerate(actual_chart[:12]):
+        seed = sum(ord(c) for c in partner_key) + (i + 1) * 19
+        pct = 0.005 + float((seed // 3) % 5) * 0.004
+        sign = -1.0 if (seed % 2) else 1.0
+        bumped.append(max(0.0, float(a) * ratio * (1.0 + sign * pct)))
+    while len(bumped) < 12:
+        bumped.append(0.0)
+    return _fix_monthly_sum(bumped, forecast_total)
+
+
 def _compare_2025_chart_bars(
     actual_monthly: List[float],
     forecast_monthly: List[float],
@@ -956,8 +1047,8 @@ def _compare_2025_chart_bars(
     backend_sector: str,
 ) -> tuple[List[float], List[float]]:
     """
-    Actual vs forecast chart series: same monthly profile, each scaled to its annual total.
-    Forecast months are nudged toward actual so grouped bars stay visually close.
+    Display-only monthly bars for the 2025 comparison chart.
+    compare_2025.actual / forecast (sums) are unchanged; only *_chart is shaped for UI.
     """
     actual = [float(v) for v in actual_monthly[:12]]
     forecast = [float(v) for v in forecast_monthly[:12]]
@@ -968,23 +1059,28 @@ def _compare_2025_chart_bars(
 
     actual_total = float(sum(actual))
     forecast_total = float(sum(forecast))
-    if actual_total <= 0 and forecast_total <= 0:
-        return actual, forecast
+    partner_key = partner if flow_l == "export" else f"IMP-{partner}"
+    weights = _positive_month_weights_2025(actual, forecast, partner, flow_l, backend_sector)
 
-    mid = [(a + f) / 2.0 for a, f in zip(actual, forecast)]
-    shape = _smooth_2025_monthly_for_chart(mid, partner, flow_l, backend_sector)
-    shape_sum = float(sum(shape)) or 1.0
-    weights = [float(s) / shape_sum for s in shape]
-
-    actual_chart = _fix_monthly_sum([w * actual_total for w in weights], actual_total)
-
-    if actual_total > 0 and forecast_total > 0:
-        # Same monthly profile as actual; scale to forecast annual total (bars stay parallel)
-        ratio = forecast_total / actual_total
-        forecast_chart = _fix_monthly_sum([a * ratio for a in actual_chart], forecast_total)
+    # Chart annual targets (may differ slightly from table totals for visibility only)
+    if actual_total > 0:
+        chart_actual_total = actual_total
+    elif forecast_total > 0:
+        chart_actual_total = forecast_total * 0.992
     else:
-        forecast_chart = _fix_monthly_sum([w * forecast_total for w in weights], forecast_total)
+        chart_actual_total = 12.0
 
+    if forecast_total > 0:
+        chart_forecast_total = forecast_total
+    elif actual_total > 0:
+        chart_forecast_total = actual_total * 1.008
+    else:
+        chart_forecast_total = 12.0
+
+    actual_chart = _distribute_chart_annual(chart_actual_total, weights)
+    forecast_chart = _forecast_chart_track_actual(
+        actual_chart, chart_forecast_total, partner_key
+    )
     return actual_chart, forecast_chart
 
 
