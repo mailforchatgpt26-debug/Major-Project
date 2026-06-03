@@ -10,3 +10,4 @@ restartPolicyType = "ON_FAILURE"
 
 [deploy.env]
 RAILWAY_LOW_MEMORY = "1"
+DISABLE_GDELT_LIVE = "1"

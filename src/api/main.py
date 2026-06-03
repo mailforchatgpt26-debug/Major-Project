@@ -236,6 +236,15 @@ def _low_memory_mode() -> bool:
     return flag.lower() in ("1", "true", "yes")
 
 
+def _gdelt_live_enabled() -> bool:
+    """Live GDELT DOC API (rate-limited). Off when DISABLE_GDELT_LIVE=1 or RAILWAY_LOW_MEMORY=1."""
+    if os.getenv("DISABLE_GDELT_LIVE", "").lower() in ("1", "true", "yes"):
+        return False
+    if os.getenv("ENABLE_GDELT_LIVE", "").lower() in ("1", "true", "yes"):
+        return True
+    return not _low_memory_mode()
+
+
 def _ensure_graph_cache() -> None:
     """Build graph cache once; use a small anchor set on low-memory hosts."""
     if getattr(app.state, "_cached_graphs", None):
@@ -369,7 +378,7 @@ async def _refresh_live_sentiment_once():
     Sequential with inter-request sleep to avoid triggering GDELT's per-IP rate limit.
     """
     global live_sentiment_cache
-    if fetcher is None or sentiment_analyzer is None:
+    if not _gdelt_live_enabled() or fetcher is None or sentiment_analyzer is None:
         return
 
     updated = 0
@@ -549,31 +558,38 @@ async def lifespan(app: FastAPI):
 
         asyncio.create_task(_warm_predictions_cache())
 
-        fetcher = GDELTArticleFetcher()
-        if not lite:
-            try:
-                sentiment_analyzer = FinancialSentimentAnalyzer()
-                logger.info("✓ FinBERT sentiment analyzer ready")
-            except Exception as analyzer_err:
-                sentiment_analyzer = None
-                logger.warning(
-                    f"⚠️  FinBERT unavailable ({analyzer_err}) — live GDELT news will use neutral sentiment"
-                )
-        logger.info("✓ GDELT news fetcher ready")
-
-        if not lite:
-
-            async def _warm_gdelt_news_cache() -> None:
-                await asyncio.sleep(120)
+        if _gdelt_live_enabled():
+            fetcher = GDELTArticleFetcher()
+            if not lite:
                 try:
-                    warmed = await asyncio.to_thread(fetcher.fetch_general_trade_articles, 50)
-                    logger.info(f"✓ GDELT news cache warmed ({len(warmed or [])} articles)")
-                except Exception as warm_err:
-                    logger.warning(f"GDELT cache warm-up skipped: {type(warm_err).__name__}: {warm_err}")
+                    sentiment_analyzer = FinancialSentimentAnalyzer()
+                    logger.info("✓ FinBERT sentiment analyzer ready")
+                except Exception as analyzer_err:
+                    sentiment_analyzer = None
+                    logger.warning(
+                        f"⚠️  FinBERT unavailable ({analyzer_err}) — live GDELT news will use neutral sentiment"
+                    )
+            logger.info("✓ GDELT live fetch enabled")
 
-            asyncio.create_task(_warm_gdelt_news_cache())
-            asyncio.create_task(_sentiment_refresh_loop())
-            logger.info("✓ Live sentiment refresh loop started")
+            if not lite:
+
+                async def _warm_gdelt_news_cache() -> None:
+                    await asyncio.sleep(120)
+                    try:
+                        warmed = await asyncio.to_thread(fetcher.fetch_general_trade_articles, 50)
+                        logger.info(f"✓ GDELT news cache warmed ({len(warmed or [])} articles)")
+                    except Exception as warm_err:
+                        logger.warning(f"GDELT cache warm-up skipped: {type(warm_err).__name__}: {warm_err}")
+
+                asyncio.create_task(_warm_gdelt_news_cache())
+                asyncio.create_task(_sentiment_refresh_loop())
+                logger.info("✓ Live sentiment refresh loop started")
+        else:
+            fetcher = None
+            logger.info(
+                "GDELT live fetch disabled — news API serves archived articles only "
+                "(set ENABLE_GDELT_LIVE=1 to re-enable)"
+            )
 
         yield
     except Exception as e:
@@ -3307,10 +3323,12 @@ async def get_news(
         except Exception as e:
             logger.error(f"Archived news load failed: {e}")
 
-    # 2) Optional GDELT refresh (rate-limited) — skip when archive already fills the panel.
+    # 2) Optional GDELT refresh (rate-limited) — disabled in production when DISABLE_GDELT_LIVE / low-memory.
     rt_articles: List[Dict] = []
     try:
-        if len(news_list) >= 20:
+        if not _gdelt_live_enabled():
+            logger.debug("GDELT live fetch disabled — using archived articles only")
+        elif len(news_list) >= 20:
             logger.info("Skipping GDELT refresh — archive feed already has enough articles")
         elif target_partner and fetcher:
             logger.info(f"🌐 Triggering real-time news analysis for {target_partner}...")
