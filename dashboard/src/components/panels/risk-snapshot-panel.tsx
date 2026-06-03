@@ -4,6 +4,7 @@ import Link from "next/link"
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, Shield } from "lucide-react"
 import type { ResiliencePartner, TradeResilience } from "@/lib/types"
 import { formatPharmaExportSharePct } from "@/lib/pharma-constants"
+import { corridorCardInsights } from "@/lib/corridor-insights"
 
 function hhiBarColor(hhi: number) {
   if (hhi < 1500) return "bg-green-500"
@@ -21,28 +22,10 @@ function hhiLabel(hhi: number, label?: string) {
 }
 
 function corridorInsight(flags: string[]): string | null {
-  const decline = flags.find((f) => f.startsWith("Likely decline period:"))
-  if (decline) {
-    const period = decline.replace("Likely decline period:", "").split("—")[0].trim()
-    return `Decline window ${period}`
-  }
-  const sent = flags.find((f) => f.startsWith("Bilateral news sentiment:"))
-  if (sent) {
-    const m = sent.match(/:\s*(positive|negative|neutral)/i)
-    const score = sent.match(/\(([+-]?[\d.]+)/)
-    if (m && score) return `News ${m[1]} (${score[1]})`
-  }
-  const policy = flags.find((f) => f.startsWith("Policy/trade friction index:"))
-  if (policy) {
-    const m = policy.match(/index:\s*([\d.]+)\s*\((\w+)/i)
-    if (m) return `Policy friction ${m[1]} · ${m[2]}`
-  }
-  const loc = flags.find((f) => f.startsWith("Localization pressure index:"))
-  if (loc) {
-    const m = loc.match(/index:\s*([\d.]+)\s*\((\w+)/i)
-    if (m) return `Localization ${m[1]} (${m[2]})`
-  }
-  return null
+  const lines = corridorCardInsights(flags)
+  if (!lines.length) return null
+  const first = lines[0]
+  return first.length > 120 ? `${first.slice(0, 117)}…` : first
 }
 
 function CorridorCard({

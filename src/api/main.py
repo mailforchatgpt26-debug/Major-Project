@@ -2054,11 +2054,7 @@ async def get_alerts(
 
         for rp in opportunities:
             alts = _alt_markets(rp.partnerCode)
-            recs = [
-                {"text": f}
-                for f in (rp.flags or [])
-                if f and not f.startswith("Model inference:")
-            ]
+            recs = [{"text": f} for f in (rp.flags or []) if f]
 
             if rp.export_share > 0.20:
                 alt_names = " and ".join(a.partner for a in alts) or "other recommended corridors"
@@ -2080,7 +2076,10 @@ async def get_alerts(
                 id=f"opp_{month}_{rp.partnerCode}",
                 type="opportunity",
                 title=title,
-                summary=f"Model inference: Invest. Forecast export ${rp.export_forecast:.0f}M ({rp.export_change*100:+.1f}% YoY).",
+                summary=(
+                    f"Forecast export ${rp.export_forecast:.0f}M "
+                    f"({rp.export_change*100:+.1f}% YoY) — ranks as a diversification candidate."
+                ),
                 partner=rp.partner,
                 partnerCode=rp.partnerCode,
                 change=rp.export_change,
@@ -2097,18 +2096,7 @@ async def get_alerts(
             )[:5]
 
         for rp in risks:
-            alts = _alt_markets(rp.partnerCode)
-            recs = [
-                {"text": f}
-                for f in (rp.flags or [])
-                if f and not f.startswith("Model inference:")
-            ]
-
-            if alts:
-                alt_text = " and ".join(a.partner for a in alts)
-                recs.append({"text":
-                    f"Model-suggested alternative corridors: {alt_text} (higher investment score, lower localization pressure)."
-                })
+            recs = [{"text": f} for f in (rp.flags or []) if f]
 
             recs.append({"text":
                 f"Composite risk score: {rp.resilience_score*100:.0f}/100 — "
@@ -2124,7 +2112,10 @@ async def get_alerts(
                 id=f"risk_{month}_{rp.partnerCode}",
                 type="risk",
                 title=risk_title,
-                summary=f"Model inference: Avoid. Forecast export ${rp.export_forecast:.0f}M ({rp.export_change*100:+.1f}% YoY).",
+                summary=(
+                    f"Forecast export ${rp.export_forecast:.0f}M "
+                    f"({rp.export_change*100:+.1f}% YoY) — elevated localization and policy headwinds."
+                ),
                 partner=rp.partner,
                 partnerCode=rp.partnerCode,
                 change=rp.export_change,
@@ -2533,6 +2524,33 @@ def _tariff_policy_pressure(partner_cc: str) -> float:
     return float(np.clip(0.40 * no_fta + 0.30 * tone_pressure + 0.30 * art_pressure, 0.0, 1.0))
 
 
+def _truncate_policy_note(note: str, max_len: int = 90) -> str:
+    note = (note or "").strip()
+    if len(note) <= max_len:
+        return note
+    cut = note[:max_len].rsplit(" ", 1)[0]
+    return cut + "…"
+
+
+def _market_footprint_sentence(
+    export_forecast: float,
+    share_pct: float,
+    export_dom: float,
+    *,
+    opportunity: bool,
+) -> str:
+    demand = "partner import demand" if export_dom >= 0.55 else "two-way trade"
+    if opportunity:
+        return (
+            f"At roughly ${export_forecast:,.0f}M per year (~{share_pct:.1f}% of India's pharma exports), "
+            f"this corridor still runs on {demand} rather than one-off spikes."
+        )
+    return (
+        f"India's footprint is about ${export_forecast:,.0f}M annually ({share_pct:.1f}% of national pharma exports) "
+        f"and remains {demand}-led for now."
+    )
+
+
 def _build_investment_flags(
     export_forecast: float,
     export_share: float,
@@ -2550,77 +2568,53 @@ def _build_investment_flags(
     decline_window: Optional[Dict[str, object]] = None,
     forecast_year: Optional[int] = None,
 ) -> List[str]:
-    """Feature-based investment flags (measurable model outputs only)."""
-    inference = "Invest" if variant == "opportunity" else "Avoid"
-    flags: List[str] = [f"Model inference: {inference}"]
+    """Three short corridor insights derived from model outputs (for resilience cards)."""
+    del cagr, import_cagr, import_share, decline_window, forecast_year
 
     imp = float(import_forecast or 0.0)
     bilateral = float(export_forecast) + imp
     export_dom = (float(export_forecast) / bilateral) if bilateral > 0 else 0.0
     yoy_pct = export_change * 100.0
-
-    flags.append(
-        f"Pharma export market size: ${export_forecast:,.0f}M "
-        f"({export_share * 100:.1f}% of India's national pharma exports)"
-    )
-
-    if cagr is not None:
-        flags.append(
-            f"Historical export growth CAGR ({_VOLATILITY_YEARS[0]}–{_VOLATILITY_YEARS[1]}): "
-            f"{cagr * 100:+.1f}%"
-        )
-
-    flags.append(f"Forecast export growth: {yoy_pct:+.1f}% YoY")
-    flags.append(
-        f"Bilateral news sentiment: {_sentiment_tone_label(sentiment_score)} "
-        f"({sentiment_score:+.2f} — recent bilateral pharma/trade coverage)"
-    )
-    flags.append(
-        f"Policy/trade friction index: {policy_pressure:.2f} "
-        f"({_policy_friction_label(policy_pressure)}) — {policy_note}"
-    )
-    flags.append(
-        f"Import dependency index: {export_dom:.2f} "
-        f"(export-dominated corridor — partner demand for Indian supply)"
-    )
+    share_pct = export_share * 100.0
+    tone = _sentiment_tone_label(sentiment_score)
+    friction = _policy_friction_label(policy_pressure)
+    loc = _localization_label(localization_idx)
+    note = _truncate_policy_note(policy_note)
 
     if variant == "opportunity":
+        vol_bit = ""
         if vol_cv is not None:
-            flags.append(f"Trade volatility CV: {vol_cv:.2f} ({_volatility_label(vol_cv)})")
-        if export_change >= -0.02:
-            flags.append("Market share signal: no significant projected export decline")
-        if import_share >= 0.05:
-            flags.append(
-                f"India pharma import reliance on partner: {import_share * 100:.1f}% of import base"
+            vol_bit = (
+                f", with {_volatility_label(vol_cv)} historical trade volatility "
+                f"(CV {vol_cv:.2f})"
             )
-    else:
-        flags.insert(
-            1,
-            f"Localization pressure index: {localization_idx:.2f} "
-            f"({_localization_label(localization_idx)})",
-        )
-        if decline_window:
-            d_start = int(decline_window["start"])
-            d_end = int(decline_window["end"])
-            reason = str(decline_window.get("reason", ""))
-            in_window = (
-                forecast_year is not None and d_start <= int(forecast_year) <= d_end
-            )
-            flags.insert(
-                2,
-                f"Likely decline period: {d_start}–{d_end}"
-                + (" (active)" if in_window else "")
-                + f" — {reason}",
-            )
-        if import_cagr is not None and import_cagr > 0.03:
-            flags.append(
-                f"Partner→India supply growth CAGR ({_VOLATILITY_YEARS[0]}–{_VOLATILITY_YEARS[1]}): "
-                f"{import_cagr * 100:+.1f}% (domestic capacity proxy)"
-            )
-        if export_change < 0:
-            flags.append("Projected import-substitution signal: negative export growth forecast")
+        return [
+            f"Export momentum looks constructive: the gravity–GNN stack implies {yoy_pct:+.1f}% YoY growth "
+            f"on about ${export_forecast:,.0f}M in bilateral pharma trade{vol_bit}.",
+            f"News we score for this pair reads {tone} (sentiment {sentiment_score:+.2f}); "
+            f"policy friction is {friction} ({policy_pressure:.2f}) — {note}.",
+            _market_footprint_sentence(
+                export_forecast, share_pct, export_dom, opportunity=True
+            ),
+        ]
 
-    return flags[:9]
+    if export_change < -0.05:
+        trend = "weakening"
+    elif export_change < 0:
+        trend = "softening"
+    elif export_change < 0.03:
+        trend = "flat"
+    else:
+        trend = "still positive but below top-tier peers"
+    return [
+        f"This corridor looks exposed: demand is {trend} ({yoy_pct:+.1f}% YoY in the forecast) "
+        f"while localization pressure is {loc} (index {localization_idx:.2f}).",
+        f"Bilateral coverage skews {tone} ({sentiment_score:+.2f}) and trade-policy friction is {friction} "
+        f"({policy_pressure:.2f}) — {note}.",
+        _market_footprint_sentence(
+            export_forecast, share_pct, export_dom, opportunity=False
+        ),
+    ]
 
 
 async def _compute_resilience_data(sector: str, month: str):

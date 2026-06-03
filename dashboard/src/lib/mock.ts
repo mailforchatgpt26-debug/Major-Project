@@ -170,6 +170,20 @@ function mockResiliencePartner(
   const note = news?.note ?? "Recent bilateral pharma/trade coverage"
   const sentLabel = sent >= 0.2 ? "positive" : sent <= -0.12 ? "negative" : "neutral"
   const policyLabel = policy < 0.35 ? "low" : policy < 0.55 ? "moderate" : "elevated"
+  const sharePct = displayPharmaExportShare(row.code, row.forecast, 2025)
+  const yoyPct = row.yoy * 100
+  const flags =
+    risk_level === "high"
+      ? [
+          `This corridor looks exposed: demand is softening (${yoyPct >= 0 ? "+" : ""}${yoyPct.toFixed(1)}% YoY in the forecast) while localization pressure is elevated (index 0.62).`,
+          `Bilateral coverage skews ${sentLabel} (${sent >= 0 ? "+" : ""}${sent.toFixed(2)}) and trade-policy friction is ${policyLabel} (${policy.toFixed(2)}) — ${note}.`,
+          `India's footprint is about $${row.forecast.toFixed(0)}M annually (${sharePct.toFixed(1)}% of national pharma exports) and remains partner import demand-led for now.`,
+        ]
+      : [
+          `Export momentum looks constructive: the gravity–GNN stack implies ${yoyPct >= 0 ? "+" : ""}${yoyPct.toFixed(1)}% YoY growth on about $${row.forecast.toFixed(0)}M in bilateral pharma trade.`,
+          `News we score for this pair reads ${sentLabel} (sentiment ${sent >= 0 ? "+" : ""}${sent.toFixed(2)}); policy friction is ${policyLabel} (${policy.toFixed(2)}) — ${note}.`,
+          `At roughly $${row.forecast.toFixed(0)}M per year (~${sharePct.toFixed(1)}% of India's pharma exports), this corridor still runs on partner import demand rather than one-off spikes.`,
+        ]
   return {
     partnerCode: row.code,
     partner: row.name,
@@ -179,11 +193,7 @@ function mockResiliencePartner(
     betweenness: 0.03,
     resilience_score: risk_level === "high" ? 0.35 : 0.72,
     risk_level,
-    flags: [
-      `Bilateral news sentiment: ${sentLabel} (${sent >= 0 ? "+" : ""}${sent.toFixed(2)} — recent bilateral pharma/trade coverage)`,
-      `Policy/trade friction index: ${policy.toFixed(2)} (${policyLabel}) — ${note}`,
-      ...(risk_level === "high" ? ["Localization pressure index: 0.62 (elevated)"] : []),
-    ],
+    flags,
     export_forecast: row.forecast,
     export_change: row.yoy,
   }
