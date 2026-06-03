@@ -110,18 +110,6 @@ export function ResiliencePanel({ resilience }: { resilience?: TradeResilience }
         <p className="text-xs text-muted-foreground">Lower = more diversified (better)</p>
       </div>
 
-      {/* Vulnerable corridors */}
-      {resilience.top_risks.length > 0 && (
-        <div>
-          <p className="text-xs font-medium mb-2 text-destructive">Declining corridors</p>
-          <div className="space-y-2">
-            {resilience.top_risks.map((p) => (
-              <PartnerRow key={p.partnerCode} p={p} variant="risk" />
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Growth opportunities */}
       {resilience.top_opportunities.length > 0 && (
         <div>
@@ -131,6 +119,18 @@ export function ResiliencePanel({ resilience }: { resilience?: TradeResilience }
           <div className="space-y-2">
             {resilience.top_opportunities.map((p) => (
               <PartnerRow key={p.partnerCode} p={p} variant="opportunity" />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Vulnerable corridors */}
+      {resilience.top_risks.length > 0 && (
+        <div>
+          <p className="text-xs font-medium mb-2 text-destructive">Declining corridors</p>
+          <div className="space-y-2">
+            {resilience.top_risks.map((p) => (
+              <PartnerRow key={p.partnerCode} p={p} variant="risk" />
             ))}
           </div>
         </div>

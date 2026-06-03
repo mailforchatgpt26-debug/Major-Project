@@ -177,12 +177,10 @@ function mockResiliencePartner(
       ? [
           `This corridor looks exposed: demand is softening (${yoyPct >= 0 ? "+" : ""}${yoyPct.toFixed(1)}% YoY in the forecast) while localization pressure is elevated (index 0.62).`,
           `Bilateral coverage skews ${sentLabel} (${sent >= 0 ? "+" : ""}${sent.toFixed(2)}) and trade-policy friction is ${policyLabel} (${policy.toFixed(2)}) — ${note}.`,
-          `India's footprint is about $${row.forecast.toFixed(0)}M annually (${sharePct.toFixed(1)}% of national pharma exports) and remains partner import demand-led for now.`,
         ]
       : [
           `Export momentum looks constructive: the gravity–GNN stack implies ${yoyPct >= 0 ? "+" : ""}${yoyPct.toFixed(1)}% YoY growth on about $${row.forecast.toFixed(0)}M in bilateral pharma trade.`,
           `News we score for this pair reads ${sentLabel} (sentiment ${sent >= 0 ? "+" : ""}${sent.toFixed(2)}); policy friction is ${policyLabel} (${policy.toFixed(2)}) — ${note}.`,
-          `At roughly $${row.forecast.toFixed(0)}M per year (~${sharePct.toFixed(1)}% of India's pharma exports), this corridor still runs on partner import demand rather than one-off spikes.`,
         ]
   return {
     partnerCode: row.code,

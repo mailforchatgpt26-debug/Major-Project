@@ -2054,18 +2054,13 @@ async def get_alerts(
 
         for rp in opportunities:
             alts = _alt_markets(rp.partnerCode)
-            recs = [{"text": f} for f in (rp.flags or []) if f]
-
-            if rp.export_share > 0.20:
-                alt_names = " and ".join(a.partner for a in alts) or "other recommended corridors"
-                recs.append({"text":
-                    f"Concentration note: {_fmt_share(rp.export_share)} of national exports (HHI {export_hhi:.0f}) — "
-                    f"balance exposure with {alt_names}."
-                })
-            recs.append({"text":
-                f"Composite investment score: {rp.resilience_score*100:.0f}/100 "
-                f"(market size, growth, import dependency, regulatory stability)."
-            })
+            recs = _build_alert_recommendations(
+                rp,
+                variant="opportunity",
+                export_hhi=export_hhi,
+                alt_partners=alts,
+                fmt_share=_fmt_share,
+            )
 
             title = (
                 f"Recommended for investment: {rp.partner}"
@@ -2096,12 +2091,14 @@ async def get_alerts(
             )[:5]
 
         for rp in risks:
-            recs = [{"text": f} for f in (rp.flags or []) if f]
-
-            recs.append({"text":
-                f"Composite risk score: {rp.resilience_score*100:.0f}/100 — "
-                f"elevated localization pressure and/or weak export growth vs historical baseline."
-            })
+            alts = _alt_markets(rp.partnerCode)
+            recs = _build_alert_recommendations(
+                rp,
+                variant="risk",
+                export_hhi=export_hhi,
+                alt_partners=alts,
+                fmt_share=_fmt_share,
+            )
 
             risk_title = (
                 f"Not recommended for investment: {rp.partner}"
@@ -2551,6 +2548,215 @@ def _market_footprint_sentence(
     )
 
 
+def _corridor_insight_lines(
+    export_forecast: float,
+    export_share: float,
+    import_forecast: Optional[float],
+    import_share: float,
+    export_change: float,
+    cagr: Optional[float],
+    import_cagr: Optional[float],
+    vol_cv: Optional[float],
+    policy_pressure: float,
+    localization_idx: float,
+    variant: str,
+    sentiment_score: float,
+    policy_note: str,
+    decline_window: Optional[Dict[str, object]] = None,
+    forecast_year: Optional[int] = None,
+) -> List[str]:
+    """Ordered corridor insights (cards use first 2; alerts can use up to 6)."""
+    del decline_window, forecast_year
+
+    imp = float(import_forecast or 0.0)
+    bilateral = float(export_forecast) + imp
+    export_dom = (float(export_forecast) / bilateral) if bilateral > 0 else 0.0
+    yoy_pct = export_change * 100.0
+    share_pct = export_share * 100.0
+    tone = _sentiment_tone_label(sentiment_score)
+    friction = _policy_friction_label(policy_pressure)
+    loc = _localization_label(localization_idx)
+    note = _truncate_policy_note(policy_note)
+    lines: List[str] = []
+
+    if variant == "opportunity":
+        vol_bit = ""
+        if vol_cv is not None:
+            vol_bit = (
+                f", with {_volatility_label(vol_cv)} historical trade volatility "
+                f"(CV {vol_cv:.2f})"
+            )
+        lines.append(
+            f"Export momentum looks constructive: the gravity–GNN stack implies {yoy_pct:+.1f}% YoY growth "
+            f"on about ${export_forecast:,.0f}M in bilateral pharma trade{vol_bit}."
+        )
+    else:
+        if export_change < -0.05:
+            trend = "weakening"
+        elif export_change < 0:
+            trend = "softening"
+        elif export_change < 0.03:
+            trend = "flat"
+        else:
+            trend = "still positive but below top-tier peers"
+        lines.append(
+            f"This corridor looks exposed: demand is {trend} ({yoy_pct:+.1f}% YoY in the forecast) "
+            f"while localization pressure is {loc} (index {localization_idx:.2f})."
+        )
+
+    lines.append(
+        f"Bilateral coverage skews {tone} ({sentiment_score:+.2f}) and trade-policy friction is {friction} "
+        f"({policy_pressure:.2f}) — {note}."
+    )
+    lines.append(
+        _market_footprint_sentence(
+            export_forecast, share_pct, export_dom, opportunity=(variant == "opportunity")
+        )
+    )
+
+    if vol_cv is not None and variant == "risk":
+        lines.append(
+            f"Trade flows have been {_volatility_label(vol_cv)} over the last five years "
+            f"(coefficient of variation {vol_cv:.2f})."
+        )
+    if variant == "risk" and export_change < 0:
+        lines.append(
+            "The forecast implies shrinking export share — consistent with import-substitution or "
+            "localization headwinds in this market."
+        )
+    elif variant == "opportunity" and export_change >= -0.02:
+        lines.append("No material export decline is projected for this corridor in the forecast window.")
+    if import_share >= 0.05:
+        lines.append(
+            f"India also sources about {import_share * 100:.1f}% of its pharma imports from this partner "
+            f"(two-way corridor, not export-only)."
+        )
+    if cagr is not None and variant == "opportunity":
+        lines.append(
+            f"Historical export momentum ({_VOLATILITY_YEARS[0]}–{_VOLATILITY_YEARS[1]}) averaged "
+            f"{cagr * 100:+.1f}% annually before the current forecast step."
+        )
+    if import_cagr is not None and import_cagr > 0.03 and variant == "risk":
+        lines.append(
+            f"Partner→India supply has grown about {import_cagr * 100:+.1f}% annually "
+            f"({_VOLATILITY_YEARS[0]}–{_VOLATILITY_YEARS[1]}), a proxy for rising domestic capacity."
+        )
+
+    return lines
+
+
+def _build_corridor_card_flags(
+    export_forecast: float,
+    export_share: float,
+    import_forecast: Optional[float],
+    import_share: float,
+    export_change: float,
+    cagr: Optional[float],
+    import_cagr: Optional[float],
+    vol_cv: Optional[float],
+    policy_pressure: float,
+    localization_idx: float,
+    variant: str,
+    sentiment_score: float,
+    policy_note: str,
+    decline_window: Optional[Dict[str, object]] = None,
+    forecast_year: Optional[int] = None,
+) -> List[str]:
+    """Two short insights for Vulnerable / Expand corridor cards."""
+    return _corridor_insight_lines(
+        export_forecast,
+        export_share,
+        import_forecast,
+        import_share,
+        export_change,
+        cagr,
+        import_cagr,
+        vol_cv,
+        policy_pressure,
+        localization_idx,
+        variant,
+        sentiment_score,
+        policy_note,
+        decline_window=decline_window,
+        forecast_year=forecast_year,
+    )[:2]
+
+
+def _build_alert_recommendations(
+    rp: ResiliencePartner,
+    *,
+    variant: str,
+    export_hhi: float,
+    alt_partners: List[ResiliencePartner],
+    fmt_share,
+) -> List[Dict[str, str]]:
+    """Five to six detail bullets for Markets declining / growth potential sections."""
+    partner_cc = rp.partnerCode
+    flag_sentiment = _resolve_flag_sentiment(partner_cc, variant)
+    flag_policy, flag_policy_note = _resolve_flag_policy_friction(partner_cc, variant)
+    yearly = _ind_pharma_export_yearly(partner_cc)
+    imp_yearly = _ind_pharma_import_yearly(partner_cc)
+    cagr = _export_cagr(yearly, _VOLATILITY_YEARS[0], _VOLATILITY_YEARS[1])
+    import_cagr = _export_cagr(imp_yearly, _VOLATILITY_YEARS[0], _VOLATILITY_YEARS[1])
+    vol_cv = _export_volatility_cv(yearly, _VOLATILITY_YEARS[0], _VOLATILITY_YEARS[1])
+    imp_f = 0.0
+    policy_pressure = _pharma_policy_pressure_for_partner(partner_cc)
+    localization_idx = _localization_pressure_index(
+        rp.export_forecast, imp_f, rp.export_change, policy_pressure
+    )
+
+    texts = _corridor_insight_lines(
+        rp.export_forecast,
+        rp.export_share,
+        None,
+        rp.import_share,
+        rp.export_change,
+        cagr,
+        import_cagr,
+        vol_cv,
+        flag_policy,
+        localization_idx,
+        variant,
+        flag_sentiment,
+        flag_policy_note,
+    )[:4]
+
+    if variant == "opportunity":
+        texts.append(
+            f"Composite investment score: {rp.resilience_score * 100:.0f}/100 "
+            f"(market size, growth, import dependency, regulatory stability)."
+        )
+        if rp.export_share > 0.20:
+            alt_names = " and ".join(a.partner for a in alt_partners) or "other recommended corridors"
+            texts.append(
+                f"Concentration note: {fmt_share(rp.export_share)} of national exports "
+                f"(HHI {export_hhi:.0f}) — balance exposure with {alt_names}."
+            )
+        if rp.pagerank >= 0.15:
+            texts.append(
+                f"Network centrality is relatively high (PageRank {rp.pagerank:.2f}) — "
+                f"shocks here can propagate across regional pharma trade."
+            )
+    else:
+        texts.append(
+            f"Composite risk score: {rp.resilience_score * 100:.0f}/100 — "
+            f"elevated localization pressure and/or weak export growth outlook."
+        )
+        if alt_partners:
+            alt_names = " and ".join(a.partner for a in alt_partners)
+            texts.append(
+                f"To reduce concentration risk, the model ranks {alt_names} as stronger "
+                f"diversification options (higher resilience, lower localization pressure)."
+            )
+        if localization_idx >= 0.55:
+            texts.append(
+                f"Localization pressure index {localization_idx:.2f} ({_localization_label(localization_idx)}) "
+                f"suggests rising domestic production or import substitution in this market."
+            )
+
+    return [{"text": t} for t in texts[:6]]
+
+
 def _build_investment_flags(
     export_forecast: float,
     export_share: float,
@@ -2568,53 +2774,24 @@ def _build_investment_flags(
     decline_window: Optional[Dict[str, object]] = None,
     forecast_year: Optional[int] = None,
 ) -> List[str]:
-    """Three short corridor insights derived from model outputs (for resilience cards)."""
-    del cagr, import_cagr, import_share, decline_window, forecast_year
-
-    imp = float(import_forecast or 0.0)
-    bilateral = float(export_forecast) + imp
-    export_dom = (float(export_forecast) / bilateral) if bilateral > 0 else 0.0
-    yoy_pct = export_change * 100.0
-    share_pct = export_share * 100.0
-    tone = _sentiment_tone_label(sentiment_score)
-    friction = _policy_friction_label(policy_pressure)
-    loc = _localization_label(localization_idx)
-    note = _truncate_policy_note(policy_note)
-
-    if variant == "opportunity":
-        vol_bit = ""
-        if vol_cv is not None:
-            vol_bit = (
-                f", with {_volatility_label(vol_cv)} historical trade volatility "
-                f"(CV {vol_cv:.2f})"
-            )
-        return [
-            f"Export momentum looks constructive: the gravity–GNN stack implies {yoy_pct:+.1f}% YoY growth "
-            f"on about ${export_forecast:,.0f}M in bilateral pharma trade{vol_bit}.",
-            f"News we score for this pair reads {tone} (sentiment {sentiment_score:+.2f}); "
-            f"policy friction is {friction} ({policy_pressure:.2f}) — {note}.",
-            _market_footprint_sentence(
-                export_forecast, share_pct, export_dom, opportunity=True
-            ),
-        ]
-
-    if export_change < -0.05:
-        trend = "weakening"
-    elif export_change < 0:
-        trend = "softening"
-    elif export_change < 0.03:
-        trend = "flat"
-    else:
-        trend = "still positive but below top-tier peers"
-    return [
-        f"This corridor looks exposed: demand is {trend} ({yoy_pct:+.1f}% YoY in the forecast) "
-        f"while localization pressure is {loc} (index {localization_idx:.2f}).",
-        f"Bilateral coverage skews {tone} ({sentiment_score:+.2f}) and trade-policy friction is {friction} "
-        f"({policy_pressure:.2f}) — {note}.",
-        _market_footprint_sentence(
-            export_forecast, share_pct, export_dom, opportunity=False
-        ),
-    ]
+    """Alias for corridor card flags (2 bullets)."""
+    return _build_corridor_card_flags(
+        export_forecast,
+        export_share,
+        import_forecast,
+        import_share,
+        export_change,
+        cagr,
+        import_cagr,
+        vol_cv,
+        policy_pressure,
+        localization_idx,
+        variant,
+        sentiment_score,
+        policy_note,
+        decline_window=decline_window,
+        forecast_year=forecast_year,
+    )
 
 
 async def _compute_resilience_data(sector: str, month: str):

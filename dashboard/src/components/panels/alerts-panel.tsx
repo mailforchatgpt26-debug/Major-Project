@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import type { AlertItem } from "@/lib/types"
+import { isLegacyInsightLine } from "@/lib/corridor-insights"
 
 export function AlertsPanel({
   alerts,
@@ -53,16 +54,20 @@ function AlertCard({ item }: { item: AlertItem }) {
     if (!item.recommendations || item.recommendations.length === 0) return null
     return (
       <ul className="mt-2 space-y-1">
-        {item.recommendations.map((r: any, i: number) => {
-          const text = r.text || r.action || r.country_name || null
-          if (!text) return null
-          return (
+        {item.recommendations
+          .map((r: { text?: string; action?: string; country_name?: string }) => {
+            const text = r.text || r.action || r.country_name || null
+            if (!text || isLegacyInsightLine(String(text))) return null
+            return text
+          })
+          .filter((t): t is string => Boolean(t))
+          .slice(0, 6)
+          .map((text, i) => (
             <li key={i} className="text-xs text-muted-foreground flex gap-1.5">
               <span className="shrink-0 mt-0.5">→</span>
               <span>{text}</span>
             </li>
-          )
-        })}
+          ))}
       </ul>
     )
   }

@@ -8,7 +8,7 @@ import { useDashboardStore } from "@/components/dashboard/store"
 import type { AlertItem, ResiliencePartner, TradeResilience } from "@/lib/types"
 import { formatPharmaExportSharePct } from "@/lib/pharma-constants"
 import { apiFetchInit, getApiBaseUrl } from "@/lib/api-base"
-import { corridorCardInsights } from "@/lib/corridor-insights"
+import { corridorCardInsights, isLegacyInsightLine } from "@/lib/corridor-insights"
 
 const FIXED_MONTH = "2025-01"
 
@@ -132,17 +132,20 @@ function AlertCard({ alert }: { alert: AlertItem }) {
             What to do
           </p>
           <ul className="space-y-2">
-            {alert.recommendations.map((rec, i) => {
-              const text = (rec as Record<string, unknown>).text as string | undefined
-                ?? (rec as Record<string, unknown>).rationale as string | undefined
-              if (!text) return null
-              return (
-                <li key={i} className="flex gap-2 text-sm">
-                  <span className="text-primary shrink-0">→</span>
-                  <span>{text}</span>
-                </li>
-              )
-            })}
+            {alert.recommendations
+              .map((rec) => {
+                const text = (rec as Record<string, unknown>).text as string | undefined
+                  ?? (rec as Record<string, unknown>).rationale as string | undefined
+                return text && !isLegacyInsightLine(text) ? text : null
+              })
+              .filter((t): t is string => Boolean(t))
+              .slice(0, 6)
+              .map((text, i) => (
+              <li key={i} className="flex gap-2 text-sm">
+                <span className="text-primary shrink-0">→</span>
+                <span>{text}</span>
+              </li>
+            ))}
           </ul>
         </div>
       )}
@@ -261,6 +264,25 @@ export default function ResiliencePage() {
           )}
         </section>
 
+        {/* where India could expand — card grid */}
+        <section>
+          <h2 className="text-lg font-semibold mb-1">Where India could expand</h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            Markets with positive momentum and room to grow without adding concentration risk.
+          </p>
+          {loading.resilience && !resilience ? (
+            <SkeletonCard />
+          ) : (resilience?.top_opportunities ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">No data.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {(resilience?.top_opportunities ?? []).map((p) => (
+                <PartnerCard key={p.partnerCode} p={p} variant="opportunity" />
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* vulnerable corridors — card grid */}
         <section>
           <h2 className="text-lg font-semibold mb-1">Vulnerable corridors</h2>
@@ -280,43 +302,7 @@ export default function ResiliencePage() {
           )}
         </section>
 
-        {/* diversification targets — card grid */}
-        <section>
-          <h2 className="text-lg font-semibold mb-1">Where India could expand</h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            Markets with positive momentum and room to grow without adding concentration risk.
-          </p>
-          {loading.resilience && !resilience ? (
-            <SkeletonCard />
-          ) : (resilience?.top_opportunities ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">No data.</p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(resilience?.top_opportunities ?? []).map((p) => (
-                <PartnerCard key={p.partnerCode} p={p} variant="opportunity" />
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* risk alerts */}
-        <section>
-          <h2 className="text-lg font-semibold mb-1">Markets showing declining exports</h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            These trade corridors are forecast to shrink. The model flags them as potential risks.
-          </p>
-          {loading.alerts && alerts.length === 0 ? (
-            <div className="space-y-4"><SkeletonCard /><SkeletonCard /></div>
-          ) : riskAlerts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No risk alerts found.</p>
-          ) : (
-            <div className="space-y-4">
-              {riskAlerts.map((alert) => <AlertCard key={alert.id} alert={alert} />)}
-            </div>
-          )}
-        </section>
-
-        {/* opportunities */}
+        {/* growth opportunities */}
         <section>
           <h2 className="text-lg font-semibold mb-1">Markets with strong growth potential</h2>
           <p className="text-sm text-muted-foreground mb-4">
@@ -329,6 +315,23 @@ export default function ResiliencePage() {
           ) : (
             <div className="space-y-4">
               {opportunityAlerts.map((alert) => <AlertCard key={alert.id} alert={alert} />)}
+            </div>
+          )}
+        </section>
+
+        {/* declining exports */}
+        <section>
+          <h2 className="text-lg font-semibold mb-1">Markets showing declining exports</h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            These trade corridors are forecast to shrink. The model flags them as potential risks.
+          </p>
+          {loading.alerts && alerts.length === 0 ? (
+            <div className="space-y-4"><SkeletonCard /><SkeletonCard /></div>
+          ) : riskAlerts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No risk alerts found.</p>
+          ) : (
+            <div className="space-y-4">
+              {riskAlerts.map((alert) => <AlertCard key={alert.id} alert={alert} />)}
             </div>
           )}
         </section>
