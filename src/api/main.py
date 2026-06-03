@@ -5,9 +5,10 @@ COMPLETE with Redis caching, PostgreSQL storage, and correct response formats
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from contextlib import asynccontextmanager
 import asyncio
+import os
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -87,11 +88,11 @@ def _sync_trade_edges_from_disk() -> None:
         return
     if loader.refresh_edges_if_stale():
         _reload_valid_2025_partners_from_disk()
-        if hasattr(loader, "create_temporal_graphs"):
-            graphs = loader.create_temporal_graphs()
-            if graphs and "app" in globals():
-                app.state._cached_graphs = graphs
-                logger.info(f"✓ Refreshed {len(graphs)} cached graph snapshots after edges reload")
+        if hasattr(loader, "create_temporal_graphs") and "app" in globals():
+            app.state._cached_graphs = None
+            _predictions_cache.clear()
+            _ensure_graph_cache()
+            logger.info("✓ Refreshed graph cache after edges reload")
 
 
 def _estimate_sentiment_from_trade_signals(partner_cc: str) -> tuple:
@@ -221,6 +222,34 @@ device = torch.device('cpu')
 articles_df = None
 sentiment_analyzer = None
 fetcher = None
+
+# In-memory cache for expensive GNN prediction passes (sector, month) -> rows
+_predictions_cache: Dict[Tuple[str, str], List] = {}
+
+# Anchor snapshots only (vs 180) — enough for predictions + policy simulation
+_LOW_MEMORY_GRAPH_KEYS = ("2024-12", "2025-09", "2025-10", "2025-11", "2025-12")
+
+
+def _low_memory_mode() -> bool:
+    """Railway / small instances: set RAILWAY_LOW_MEMORY=1 or SKIP_HEAVY_STARTUP=1."""
+    flag = os.getenv("RAILWAY_LOW_MEMORY", "") or os.getenv("SKIP_HEAVY_STARTUP", "")
+    return flag.lower() in ("1", "true", "yes")
+
+
+def _ensure_graph_cache() -> None:
+    """Build graph cache once; use a small anchor set on low-memory hosts."""
+    if getattr(app.state, "_cached_graphs", None):
+        return
+    if loader is None or not hasattr(loader, "create_temporal_graphs"):
+        return
+    keys = _LOW_MEMORY_GRAPH_KEYS if _low_memory_mode() else None
+    graphs = loader.create_temporal_graphs(time_keys=keys)
+    app.state._cached_graphs = graphs
+    logger.info(
+        f"✓ Graph cache ready ({len(graphs)} snapshots"
+        f"{', low-memory anchors' if keys else ''})"
+    )
+
 
 def _load_sentiment_from_local_articles():
     """
@@ -478,55 +507,73 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("⚠️  No articles.csv found")
             
-        # Initialize Simulator (Look for Causal Model first, then Baseline)
-        try:
-            causal_model = model_dir / "causal_gnn_working.pt"
-            if causal_model.exists():
-                simulator = TradeSimulator(str(causal_model))
-                logger.info("✓ Causal Trade Simulator initialized")
-            else:
-                simulator = TradeSimulator(str(load_path))
-                logger.info("✓ Baseline Trade Simulator initialized (Causal model not found)")
-        except Exception as sim_err:
-            logger.warning(f"⚠️  Simulator initialization failed: {sim_err}")
+        lite = _low_memory_mode()
+        if lite:
+            logger.info("RAILWAY_LOW_MEMORY=1 — skipping causal simulator, FinBERT, full graph cache")
 
-        # Load bilateral sentiment cache
+        if not lite:
+            try:
+                causal_model = model_dir / "causal_gnn_working.pt"
+                if causal_model.exists():
+                    simulator = TradeSimulator(str(causal_model))
+                    logger.info("✓ Causal Trade Simulator initialized")
+                else:
+                    simulator = TradeSimulator(str(load_path))
+                    logger.info("✓ Baseline Trade Simulator initialized (Causal model not found)")
+            except Exception as sim_err:
+                logger.warning(f"⚠️  Simulator initialization failed: {sim_err}")
+
         load_bilateral_sentiment()
-
-        # Pre-populate live_sentiment_cache from local articles (no network needed)
         _load_sentiment_from_local_articles()
-        
-        # Pre-cache graphs for simulation speed
-        if loader and hasattr(loader, "create_temporal_graphs"):
-             app.state._cached_graphs = loader.create_temporal_graphs()
-             logger.info(f"✓ Pre-cached {len(app.state._cached_graphs)} graph snapshots")
-        
-        # News fetcher must start even when FinBERT model download fails offline.
+
+        _ensure_graph_cache()
+
+        async def _warm_predictions_cache() -> None:
+            """Precompute pharma 2025 (and extra years only when not low-memory)."""
+            await asyncio.sleep(3)
+            if model is None or loader is None:
+                return
+            months = ("2025-01",) if lite else ("2025-01", "2026-01")
+            for month in months:
+                key = ("pharma", month)
+                if key in _predictions_cache:
+                    continue
+                try:
+                    preds = await asyncio.to_thread(_generate_predictions_sync, "pharma", month)
+                    _predictions_cache[key] = preds
+                    logger.info(
+                        f"✓ Predictions cache warmed: pharma {month} ({len(preds)} partners)"
+                    )
+                except Exception as exc:
+                    logger.warning(f"Predictions warm-up skipped for {month}: {exc}")
+
+        asyncio.create_task(_warm_predictions_cache())
+
         fetcher = GDELTArticleFetcher()
-        try:
-            sentiment_analyzer = FinancialSentimentAnalyzer()
-            logger.info("✓ FinBERT sentiment analyzer ready")
-        except Exception as analyzer_err:
-            sentiment_analyzer = None
-            logger.warning(
-                f"⚠️  FinBERT unavailable ({analyzer_err}) — live GDELT news will use neutral sentiment"
-            )
+        if not lite:
+            try:
+                sentiment_analyzer = FinancialSentimentAnalyzer()
+                logger.info("✓ FinBERT sentiment analyzer ready")
+            except Exception as analyzer_err:
+                sentiment_analyzer = None
+                logger.warning(
+                    f"⚠️  FinBERT unavailable ({analyzer_err}) — live GDELT news will use neutral sentiment"
+                )
         logger.info("✓ GDELT news fetcher ready")
 
-        async def _warm_gdelt_news_cache() -> None:
-            """Populate today's GDELT articles in cache so /api/news responds quickly."""
-            await asyncio.sleep(120)
-            try:
-                warmed = await asyncio.to_thread(fetcher.fetch_general_trade_articles, 50)
-                logger.info(f"✓ GDELT news cache warmed ({len(warmed or [])} articles)")
-            except Exception as warm_err:
-                logger.warning(f"GDELT cache warm-up skipped: {type(warm_err).__name__}: {warm_err}")
+        if not lite:
 
-        asyncio.create_task(_warm_gdelt_news_cache())
+            async def _warm_gdelt_news_cache() -> None:
+                await asyncio.sleep(120)
+                try:
+                    warmed = await asyncio.to_thread(fetcher.fetch_general_trade_articles, 50)
+                    logger.info(f"✓ GDELT news cache warmed ({len(warmed or [])} articles)")
+                except Exception as warm_err:
+                    logger.warning(f"GDELT cache warm-up skipped: {type(warm_err).__name__}: {warm_err}")
 
-        # Start live sentiment refresh loop in background (runs immediately, then every 30 min)
-        asyncio.create_task(_sentiment_refresh_loop())
-        logger.info("✓ Live sentiment refresh loop started")
+            asyncio.create_task(_warm_gdelt_news_cache())
+            asyncio.create_task(_sentiment_refresh_loop())
+            logger.info("✓ Live sentiment refresh loop started")
 
         yield
     except Exception as e:
@@ -1262,16 +1309,33 @@ async def get_predictions(
     sector: str = Query(..., description="Sector: pharma or textiles"),
     month: str = Query(..., description="Month in YYYY-MM format")
 ):
-    """Bilateral predictions: export (IND→partner) and import (partner→IND).
-    Only returns countries that have data for BOTH directions.
-
-    For target year >= 2025, annual export/import forecasts are the sum of twelve
-    monthly model passes (fractional lag progression through the year). Earlier
-    years use the legacy single pass with ×12 annualization."""
-
+    """Bilateral predictions (cached; heavy GNN work runs off the event loop)."""
     if model is None or loader is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
+    key = (sector.lower(), month)
+    cached = _predictions_cache.get(key)
+    if cached is not None:
+        return cached
+
+    try:
+        result = await asyncio.to_thread(_generate_predictions_sync, sector, month)
+        _predictions_cache[key] = result
+        return result
+    except HTTPException:
+        raise
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid month format")
+    except Exception as e:
+        logger.error(f"Prediction error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _generate_predictions_sync(
+    sector: str,
+    month: str,
+) -> List[Prediction]:
+    """CPU-heavy bilateral forecast (must run in a worker thread, not on the asyncio loop)."""
     try:
         year, _ = map(int, month.split('-'))
         backend_sector = {"pharma": "Pharmaceuticals", "textiles": "Textiles"}.get(sector.lower())
@@ -1303,7 +1367,10 @@ async def get_predictions(
         #   year=2028 → n=4
         # Using the Oct-2025 graph as the base would make 2025 and 2026 give identical
         # predictions (both n=1) and the "vs actual" comparison would be meaningless.
-        cached_graphs = getattr(app.state, '_cached_graphs', None)
+            cached_graphs = getattr(app.state, "_cached_graphs", None)
+        if not cached_graphs:
+            _ensure_graph_cache()
+            cached_graphs = getattr(app.state, "_cached_graphs", None)
         if not cached_graphs:
             raise HTTPException(status_code=503, detail="Graph cache not ready")
 
@@ -1752,6 +1819,7 @@ async def get_partner_monthly_series(
     partner_id = loader.node_mapping[partner]
     sect_lower = backend_sector.lower()
 
+    _ensure_graph_cache()
     cached_graphs = getattr(app.state, "_cached_graphs", None)
     if not cached_graphs:
         raise HTTPException(status_code=503, detail="Graph cache not ready")
@@ -2559,7 +2627,16 @@ def _build_investment_flags(
 
 async def _compute_resilience_data(sector: str, month: str):
     """Shared helper: computes full resilience data for both /resilience and /alerts."""
-    predictions = await get_predictions(sector, month)
+    return await asyncio.to_thread(_compute_resilience_data_sync, sector, month)
+
+
+def _compute_resilience_data_sync(sector: str, month: str):
+    """Network analysis on top of cached predictions (worker thread)."""
+    key = (sector.lower(), month)
+    predictions = _predictions_cache.get(key)
+    if predictions is None:
+        predictions = _generate_predictions_sync(sector, month)
+        _predictions_cache[key] = predictions
     if not predictions:
         return None
 
@@ -2580,10 +2657,12 @@ async def _compute_resilience_data(sector: str, month: str):
     export_hhi = sum((v / portfolio_exp) ** 2 for v in exp_values) * 10000
     import_hhi = sum((v / total_imp) ** 2 for v in imp_values) * 10000
 
-    if not hasattr(app.state, "_cached_graphs") or app.state._cached_graphs is None:
-        app.state._cached_graphs = loader.create_temporal_graphs()
+    _ensure_graph_cache()
+    cached_graphs = getattr(app.state, "_cached_graphs", None)
+    if not cached_graphs:
+        return None
 
-    g = app.state._cached_graphs[-1]
+    g = cached_graphs[-1]
     ei = g.edge_index
     ea = g.edge_attr
 
@@ -3214,10 +3293,12 @@ async def get_explainability(
     logger.info(f"Explainability for {partner}")
     
     try:
-        if not hasattr(app.state, "_cached_graphs") or app.state._cached_graphs is None:
-            app.state._cached_graphs = loader.create_temporal_graphs()
+        _ensure_graph_cache()
+        cached_graphs = getattr(app.state, "_cached_graphs", None)
+        if not cached_graphs:
+            raise HTTPException(status_code=503, detail="Graph cache not ready")
 
-        g = app.state._cached_graphs[-1]
+        g = cached_graphs[-1]
         ei = g.edge_index
         ea = g.edge_attr.clone()
 
@@ -3444,11 +3525,11 @@ async def simulate_trade(request: SimulationRequest):
 
     cached_graphs = getattr(app.state, "_cached_graphs", None)
     if not cached_graphs:
-        if not hasattr(loader, "create_temporal_graphs"):
+        logger.info("Building graph cache on demand (policy simulation)")
+        await asyncio.to_thread(_ensure_graph_cache)
+        cached_graphs = getattr(app.state, "_cached_graphs", None)
+        if not cached_graphs:
             raise HTTPException(status_code=503, detail="Graph cache not ready")
-        logger.info("Building temporal graph cache on demand (policy simulation)")
-        cached_graphs = await asyncio.to_thread(loader.create_temporal_graphs)
-        app.state._cached_graphs = cached_graphs
 
     try:
         _sync_trade_edges_from_disk()

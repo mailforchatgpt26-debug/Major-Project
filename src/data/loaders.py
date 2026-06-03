@@ -538,7 +538,7 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Sequence
 import json
 
 from src.utils.logger import get_logger
@@ -640,8 +640,8 @@ class GraphDataLoader:
         
         return self.nodes_df, self.edges_df, self.node_mapping
     
-    def create_temporal_graphs(self) -> List[Data]:
-        """Create temporal graph sequence"""
+    def create_temporal_graphs(self, time_keys: Optional[Sequence[str]] = None) -> List[Data]:
+        """Create temporal graph sequence. Optionally restrict to specific YYYY-MM keys."""
         if self.edges_df is None:
             self.load_data()
         
@@ -654,6 +654,12 @@ class GraphDataLoader:
         )
         
         time_periods = sorted(self.edges_df['time_key'].unique())
+        if time_keys is not None:
+            wanted = set(time_keys)
+            time_periods = [tk for tk in time_periods if tk in wanted]
+            if not time_periods:
+                time_periods = sorted(self.edges_df["time_key"].unique())[-1:]
+            logger.info(f"Filtered to {len(time_periods)} anchor period(s) (low-memory mode)")
         logger.info(f"Found {len(time_periods)} time periods: {time_periods[0]} to {time_periods[-1]}")
         
         graphs = []

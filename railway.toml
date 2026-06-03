@@ -1,7 +1,12 @@
+# API service — Root Directory empty (repo root)
 [build]
 builder = "RAILPACK"
 
 [deploy]
-healthcheckPath = "/"
+startCommand = "PYTHONPATH=. uvicorn src.api.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
+
+[deploy.env]
+RAILWAY_LOW_MEMORY = "1"

@@ -83,7 +83,7 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
       // Try real API first
       const res = await fetch(
         `${getApiBaseUrl()}/api/predictions?sector=${sector}&month=${month}`,
-        { ...apiFetchInit, signal: AbortSignal.timeout(20000) }
+        { ...apiFetchInit, signal: AbortSignal.timeout(120000) }
       )
 
       if (!res.ok) throw new Error(`API returned ${res.status}`)
@@ -240,7 +240,7 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
     try {
       const res = await fetch(
         `${getApiBaseUrl()}/api/resilience?sector=${sector}&month=${month}`,
-        { ...apiFetchInit, signal: AbortSignal.timeout(30000) }
+        { ...apiFetchInit, signal: AbortSignal.timeout(120000) }
       )
       if (!res.ok) throw new Error(`API returned ${res.status}`)
       const resilience = await res.json()

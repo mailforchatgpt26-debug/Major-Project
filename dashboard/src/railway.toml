@@ -1,0 +1,12 @@
+# Web service — Root Directory = dashboard/src
+[build]
+builder = "RAILPACK"
+
+[build.env]
+NODE_OPTIONS = "--max-old-space-size=2048"
+
+[deploy]
+startCommand = "npm run start"
+healthcheckPath = "/"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
