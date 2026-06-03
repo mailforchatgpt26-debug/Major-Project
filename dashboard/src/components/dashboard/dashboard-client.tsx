@@ -38,6 +38,17 @@ export default function DashboardClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sector])
 
+  // Scroll to #predictions / #news when arriving from Risk & Resilience (or other pages)
+  useEffect(() => {
+    const hash = window.location.hash
+    if (!hash) return
+    const id = hash.replace(/^#/, "")
+    const scroll = () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })
+    scroll()
+    const t = window.setTimeout(scroll, 400)
+    return () => window.clearTimeout(t)
+  }, [])
+
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
       {/* API connection indicator */}

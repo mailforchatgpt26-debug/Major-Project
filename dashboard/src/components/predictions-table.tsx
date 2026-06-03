@@ -23,7 +23,10 @@ function fmtVal(v?: number | null): React.ReactNode {
   return <>{v.toLocaleString(undefined, { maximumFractionDigits: 0 })}</>
 }
 
-function fmtChange(c: number) {
+function fmtChange(c: number | undefined) {
+  if (c == null || !Number.isFinite(c)) {
+    return <span className="text-muted-foreground/40">—</span>
+  }
   const color = c >= 0 ? "var(--color-chart-1)" : "var(--destructive)"
   const sign = c >= 0 ? "+" : ""
   return <span style={{ color }}>{sign}{(c * 100).toFixed(1)}%</span>
@@ -104,7 +107,7 @@ function InlineExplainability({
         )}
         <div>
           <p className="text-xs text-muted-foreground mb-2">What drives this forecast</p>
-          {explainability.features.map((f) => (
+          {(explainability.features ?? []).map((f) => (
             <div key={f.feature} className="flex items-center gap-2 mb-1.5">
               <span className="text-xs w-28 truncate">{f.feature}</span>
               <MiniBar value={f.importance} color="bg-chart-2" />

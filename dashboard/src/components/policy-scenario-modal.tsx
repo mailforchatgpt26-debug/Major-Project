@@ -170,6 +170,7 @@ export function PolicyScenarioModal() {
     selectPartner,
     runSimulation,
     simulationResult,
+    simulationError,
     loading,
     sector,
   } = useDashboardStore()
@@ -458,12 +459,22 @@ export function PolicyScenarioModal() {
                   <div className="size-16 rounded-full bg-muted/40 flex items-center justify-center">
                     <FlaskConical className="size-7 opacity-30" />
                   </div>
+                  {simulationError ? (
+                    <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-left max-w-sm">
+                      <p className="text-sm font-medium text-destructive">Simulation failed</p>
+                      <p className="text-xs mt-1 text-muted-foreground">{simulationError}</p>
+                      <p className="text-[10px] mt-2 opacity-70">
+                        If the API just started, wait until /health shows model_loaded: true, then try again.
+                      </p>
+                    </div>
+                  ) : (
                   <div>
                     <p className="text-sm font-medium">No scenario run yet</p>
                     <p className="text-xs mt-1 opacity-60">
                       Choose a country and variable, then click Run
                     </p>
                   </div>
+                  )}
                   <div className="text-left space-y-2 w-full max-w-xs mt-2">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                       What makes this different?

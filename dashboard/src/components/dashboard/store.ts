@@ -31,6 +31,7 @@ type State = {
   }
   apiConnected: boolean
   simulationResult?: SimulationResult
+  simulationError?: string
 }
 
 type Actions = {
@@ -64,6 +65,7 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
   error: {},
   apiConnected: false,
   simulationResult: undefined,
+  simulationError: undefined,
 
   setSector: (sector) => set({ sector }),
   setMonth: (month) => set({ month }),
@@ -259,6 +261,7 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
 
     set((state) => ({
       loading: { ...state.loading, simulation: true },
+      simulationError: undefined,
     }))
 
     try {
@@ -280,12 +283,23 @@ export const useDashboardStore = create<State & Actions>((set, get) => ({
 
       const [res] = await Promise.all([fetchPromise, minDelay])
 
-      if (!res.ok) throw new Error("Simulation failed")
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try {
+          const errBody = await res.json()
+          if (errBody?.detail) detail = String(errBody.detail)
+        } catch {
+          /* ignore */
+        }
+        throw new Error(detail)
+      }
 
       const result = await res.json()
-      set({ simulationResult: result })
+      set({ simulationResult: result, simulationError: undefined })
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Simulation failed"
       console.error("Simulation failed:", error)
+      set({ simulationResult: undefined, simulationError: message })
     } finally {
       set((state) => ({
         loading: { ...state.loading, simulation: false },

@@ -53,11 +53,21 @@ function FlowComparePanel({
   series: PartnerMonthlySeries
   forecastColor: string
 }) {
-  const { chartData, actualTotal, forecastTotal, yDomain } = useMemo(() => {
-    const actual = series.compare_2025.actual
-    const forecast = series.compare_2025.forecast
-    const actualBars = series.compare_2025.actual_chart ?? actual
-    const forecastBars = series.compare_2025.forecast_chart ?? forecast
+  const { chartData, actualTotal, forecastTotal, annualDeltaPct, yDomain } = useMemo(() => {
+    const compare = series.compare_2025
+    if (!compare?.actual?.length || !compare?.forecast?.length) {
+      return {
+        chartData: [],
+        actualTotal: 0,
+        forecastTotal: 0,
+        annualDeltaPct: 0,
+        yDomain: [0, 1] as [number, number],
+      }
+    }
+    const actual = compare.actual
+    const forecast = compare.forecast
+    const actualBars = compare.actual_chart ?? actual
+    const forecastBars = compare.forecast_chart ?? forecast
     const chartData = series.month_labels.map((month, i) => {
       const a = actualBars[i] ?? 0
       const f = forecastBars[i] ?? 0
@@ -75,9 +85,18 @@ function FlowComparePanel({
       chartData,
       actualTotal,
       forecastTotal,
+      annualDeltaPct,
       yDomain: [Math.max(0, lo - pad), hi + pad] as [number, number],
     }
   }, [series])
+
+  if (!series.compare_2025?.actual?.length) {
+    return (
+      <div className="rounded-lg border bg-background/80 p-3">
+        <p className="text-xs text-muted-foreground">{title}: comparison data unavailable.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="rounded-lg border bg-background/80 p-3 space-y-3">

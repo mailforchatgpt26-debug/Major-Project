@@ -3442,9 +3442,13 @@ async def simulate_trade(request: SimulationRequest):
     if model is None or loader is None:
         raise HTTPException(status_code=503, detail="Model not initialized")
 
-    cached_graphs = getattr(app.state, '_cached_graphs', None)
+    cached_graphs = getattr(app.state, "_cached_graphs", None)
     if not cached_graphs:
-        raise HTTPException(status_code=503, detail="Graph cache not ready")
+        if not hasattr(loader, "create_temporal_graphs"):
+            raise HTTPException(status_code=503, detail="Graph cache not ready")
+        logger.info("Building temporal graph cache on demand (policy simulation)")
+        cached_graphs = await asyncio.to_thread(loader.create_temporal_graphs)
+        app.state._cached_graphs = cached_graphs
 
     try:
         _sync_trade_edges_from_disk()
