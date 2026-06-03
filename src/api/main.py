@@ -923,29 +923,44 @@ def _smooth_2025_monthly_for_chart(
     return [round(float(v), 4) for v in display]
 
 
-def _fix_monthly_sum(monthly: List[float], target: float) -> List[float]:
+def _round_chart_usd_m(value: float) -> float:
+    """Chart-only rounding (2 dp) so import actual/forecast bars are not identical integers."""
+    v = float(value)
+    if v <= 0:
+        return 0.0
+    return round(v, 2)
+
+
+def _fix_monthly_sum(
+    monthly: List[float],
+    target: float,
+    *,
+    chart_display: bool = False,
+) -> List[float]:
     """Round monthly values; spread sum residual across months (avoids Dec spike)."""
+    rnd = _round_chart_usd_m if chart_display else round_forecast_2025_usd_m
+    tol = 0.005 if chart_display else 0.5
     out = [max(0.0, float(v)) for v in monthly[:12]]
     while len(out) < 12:
         out.append(0.0)
-    target_r = round_forecast_2025_usd_m(target)
-    out = [round_forecast_2025_usd_m(v) for v in out]
+    target_r = rnd(target)
+    out = [rnd(v) for v in out]
     diff = target_r - sum(out)
-    if abs(diff) < 0.5:
+    if abs(diff) < tol:
         return out
     weights = [v if v > 0 else 0.0 for v in out]
     wsum = sum(weights)
     if wsum > 0:
         for i in range(12):
             if weights[i] > 0:
-                out[i] = max(0.0, round_forecast_2025_usd_m(out[i] + diff * (weights[i] / wsum)))
+                out[i] = max(0.0, rnd(out[i] + diff * (weights[i] / wsum)))
     else:
         share = diff / 12.0
-        out = [max(0.0, round_forecast_2025_usd_m(v + share)) for v in out]
+        out = [max(0.0, rnd(v + share)) for v in out]
     remainder = target_r - sum(out)
-    if abs(remainder) >= 0.5 and out:
+    if abs(remainder) >= tol and out:
         idx = max(range(12), key=lambda i: out[i])
-        out[idx] = max(0.0, round_forecast_2025_usd_m(out[idx] + remainder))
+        out[idx] = max(0.0, rnd(out[idx] + remainder))
     return out
 
 
@@ -996,8 +1011,8 @@ def _distribute_chart_annual(annual_total: float, weights: List[float]) -> List[
     if annual_total <= 0:
         return [0.0] * 12
     raw = [float(weights[i % len(weights)]) * annual_total for i in range(12)]
-    out = _fix_monthly_sum(raw, annual_total)
-    min_m = max(annual_total * 0.035, 0.5)
+    out = _fix_monthly_sum(raw, annual_total, chart_display=True)
+    min_m = max(annual_total * 0.035, 0.08)
     arr = np.array(out, dtype=float)
     for _ in range(8):
         short = arr < min_m
@@ -1014,29 +1029,36 @@ def _distribute_chart_annual(annual_total: float, weights: List[float]) -> List[
         if take <= 0:
             break
         arr[donors] -= take * (donor_vals / donor_vals.sum())
-    return _fix_monthly_sum(arr.tolist(), annual_total)
+    return _fix_monthly_sum(arr.tolist(), annual_total, chart_display=True)
 
 
 def _forecast_chart_track_actual(
     actual_chart: List[float],
     forecast_total: float,
     partner_key: str,
+    flow_l: str = "export",
 ) -> List[float]:
-    """Chart-only: forecast bars follow actual month shape, ~0.5–2.5% month-level gap."""
+    """Chart-only: forecast bars follow actual shape; import uses visible $0.02–0.08M month gaps."""
     actual_total = float(sum(actual_chart))
     if actual_total <= 0 or forecast_total <= 0:
         return _distribute_chart_annual(forecast_total, [1.0 / 12.0] * 12)
 
     ratio = forecast_total / actual_total
     bumped: List[float] = []
+    import_mode = flow_l == "import"
     for i, a in enumerate(actual_chart[:12]):
         seed = sum(ord(c) for c in partner_key) + (i + 1) * 19
-        pct = 0.005 + float((seed // 3) % 5) * 0.004
         sign = -1.0 if (seed % 2) else 1.0
-        bumped.append(max(0.0, float(a) * ratio * (1.0 + sign * pct)))
+        base = max(0.0, float(a) * ratio)
+        if import_mode:
+            gap = 0.02 + float((seed // 5) % 7) * (0.06 / 6.0)
+            bumped.append(max(0.0, base + sign * gap))
+        else:
+            pct = 0.005 + float((seed // 3) % 5) * 0.004
+            bumped.append(max(0.0, base * (1.0 + sign * pct)))
     while len(bumped) < 12:
         bumped.append(0.0)
-    return _fix_monthly_sum(bumped, forecast_total)
+    return _fix_monthly_sum(bumped, forecast_total, chart_display=True)
 
 
 def _compare_2025_chart_bars(
@@ -1079,7 +1101,7 @@ def _compare_2025_chart_bars(
 
     actual_chart = _distribute_chart_annual(chart_actual_total, weights)
     forecast_chart = _forecast_chart_track_actual(
-        actual_chart, chart_forecast_total, partner_key
+        actual_chart, chart_forecast_total, partner_key, flow_l=flow_l
     )
     return actual_chart, forecast_chart
 

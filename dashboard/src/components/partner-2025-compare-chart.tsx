@@ -19,8 +19,9 @@ const COLORS = {
   forecastImport: "#3b82f6",
 }
 
-function fmtM(v: number) {
+function fmtM(v: number, fine = false) {
   if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(1)}k`
+  if (fine) return v.toFixed(2)
   return `${Math.round(v)}`
 }
 
@@ -28,18 +29,21 @@ function CompareTooltip({
   active,
   payload,
   label,
+  fine = false,
 }: {
   active?: boolean
   payload?: Array<{ name?: string; value?: number; payload?: { Actual?: number; Forecast?: number } }>
   label?: string
+  fine?: boolean
 }) {
   if (!active || !payload?.length) return null
   const row = payload[0]?.payload
+  const fmt = (v: number) => (fine ? v.toFixed(2) : v.toFixed(1))
   return (
     <div className="rounded-md border bg-popover px-2.5 py-2 text-xs shadow-md">
       <p className="font-semibold mb-1">{label}</p>
-      {row?.Actual != null && <p className="text-slate-400">Actual: {row.Actual.toFixed(1)} M</p>}
-      {row?.Forecast != null && <p className="text-foreground">Forecast: {row.Forecast.toFixed(1)} M</p>}
+      {row?.Actual != null && <p className="text-slate-400">Actual: {fmt(row.Actual)} M</p>}
+      {row?.Forecast != null && <p className="text-foreground">Forecast: {fmt(row.Forecast)} M</p>}
     </div>
   )
 }
@@ -53,6 +57,7 @@ function FlowComparePanel({
   series: PartnerMonthlySeries
   forecastColor: string
 }) {
+  const fineChart = series.flow === "import"
   const { chartData, actualTotal, forecastTotal, annualDeltaPct, yDomain } = useMemo(() => {
     const compare = series.compare_2025
     if (!compare) {
@@ -76,8 +81,10 @@ function FlowComparePanel({
       return Math.max(total * 0.03, 0.4)
     }
     const chartData = series.month_labels.map((month, i) => {
-      const a = chartFloor(actualBars[i] ?? 0, actualTotal)
-      const f = chartFloor(forecastBars[i] ?? 0, forecastTotal)
+      const rawA = actualBars[i] ?? 0
+      const rawF = forecastBars[i] ?? 0
+      const a = fineChart ? rawA : chartFloor(rawA, actualTotal)
+      const f = fineChart ? rawF : chartFloor(rawF, forecastTotal)
       return { month, Actual: a, Forecast: f }
     })
     const annualDeltaPct =
@@ -139,9 +146,12 @@ function FlowComparePanel({
                 axisLine={false}
                 tickLine={false}
                 domain={yDomain}
-                tickFormatter={fmtM}
+                tickFormatter={(v) => fmtM(v, fineChart)}
               />
-              <Tooltip content={<CompareTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.15 }} />
+              <Tooltip
+                content={<CompareTooltip fine={fineChart} />}
+                cursor={{ fill: "hsl(var(--muted))", opacity: 0.15 }}
+              />
               <Bar dataKey="Actual" fill={COLORS.actual} radius={[3, 3, 0, 0]} maxBarSize={14} />
               <Bar dataKey="Forecast" fill={forecastColor} radius={[3, 3, 0, 0]} maxBarSize={14} />
             </BarChart>
