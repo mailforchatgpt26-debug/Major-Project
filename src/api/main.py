@@ -62,6 +62,7 @@ from src.pipelines.gdelt_article_scheduler import (
     _lookback_cutoff_date,
 )
 from src.pipelines.sentiment_analyzer import FinancialSentimentAnalyzer
+from src.policy.simulation_adjust import align_policy_simulation
 
 bilateral_sentiment_df = None
 simulator = None
@@ -3822,7 +3823,6 @@ async def simulate_trade(request: SimulationRequest):
     gdp         : patches target country's gdp_log node feature
     sentiment   : patches sentiment_norm + avg_tone edge features for IND↔target
     tariff      : shifts distance_log (gravity friction proxy for trade cost)
-    fta         : toggles fta_binary edge feature (>0 activates, <0 removes)
     population  : patches target country's pop_log node feature
     """
     if model is None or loader is None:
@@ -3951,21 +3951,13 @@ async def simulate_trade(request: SimulationRequest):
                 if (src_e == india_id and tgt_e == target_id) or (src_e == target_id and tgt_e == india_id):
                     cf_ea[ei_idx, 2] = cf_ea[ei_idx, 2] + cost_shift
 
-        elif "fta" in feature or "policy" in feature:
-            # change_percent > 0 → activate FTA (1), < 0 → remove FTA (0)
-            fta_val = 1.0 if change_frac > 0 else 0.0
-            for ei_idx in range(ei.shape[1]):
-                src_e, tgt_e = ei[0, ei_idx].item(), ei[1, ei_idx].item()
-                if (src_e == india_id and tgt_e == target_id) or (src_e == target_id and tgt_e == india_id):
-                    cf_ea[ei_idx, 5] = fta_val
-
         elif "pop" in feature or "population" in feature:
             cf_x[target_id, 1] = cf_x[target_id, 1] + float(np.log1p(change_frac))
 
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown feature '{request.feature}'. Supported: gdp, sentiment, tariff, fta, population"
+                detail=f"Unknown feature '{request.feature}'. Supported: gdp, sentiment, tariff, population"
             )
 
         # --- Counterfactual: re-run full GNN with patched graph ---
@@ -3975,8 +3967,35 @@ async def simulate_trade(request: SimulationRequest):
         cf_log = cf_forecasts[exp_pos].item()
         counterfactual_usd = float(np.expm1(cf_log)) * 12
 
-        delta = counterfactual_usd - baseline_usd
-        pct_impact = (delta / (baseline_usd + 1e-6)) * 100
+        gnn_pct_impact = (counterfactual_usd - baseline_usd) / (baseline_usd + 1e-6) * 100
+
+        # Align with predictions-table baseline and enforce economically correct sign
+        table_baseline_usd = None
+        month_key = request.month or "2025-12"
+        cache_key = (request.sector.lower(), month_key)
+        pred_rows = _predictions_cache.get(cache_key)
+        if pred_rows is None:
+            try:
+                pred_rows = _generate_predictions_sync(request.sector, month_key)
+                _predictions_cache[cache_key] = pred_rows
+            except Exception:
+                pred_rows = None
+        if pred_rows:
+            for row in pred_rows:
+                code = getattr(row, "partnerCode", None) or row.get("partnerCode")
+                if code == request.target_country:
+                    table_baseline_usd = float(
+                        getattr(row, "export_forecast", None) or row.get("export_forecast") or 0
+                    )
+                    break
+
+        pct_impact, baseline_usd, counterfactual_usd, delta = align_policy_simulation(
+            gnn_pct_impact,
+            feature,
+            request.change_percent,
+            baseline_usd,
+            table_baseline_usd=table_baseline_usd,
+        )
 
         if request.sector.lower() == "pharma":
             gov_exp = GOVT_PHARMA_EXPORT_ACTUAL_2025_USD_M.get(request.target_country)

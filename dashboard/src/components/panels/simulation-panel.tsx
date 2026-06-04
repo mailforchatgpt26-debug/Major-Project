@@ -23,12 +23,6 @@ const FEATURES = [
     icon: "🚧",
     description: "What if they raise or lower trade barriers on Indian goods?",
   },
-  {
-    key: "fta",
-    label: "Trade Deal",
-    icon: "📜",
-    description: "What if India signs or loses a free trade agreement?",
-  },
 ]
 
 function fmt(v: number) {
@@ -40,13 +34,6 @@ function fmt(v: number) {
 }
 
 function SliderLabel({ change, feature }: { change: number; feature: string }) {
-  if (feature === "fta") {
-    return (
-      <span className="text-xs text-muted-foreground">
-        {change >= 0 ? "Sign new deal" : "Remove existing deal"}
-      </span>
-    )
-  }
   if (change === 0) return <span className="text-xs text-muted-foreground">No change</span>
   const dir = change > 0 ? "increase" : "decrease"
   const abs = Math.abs(change)
@@ -84,9 +71,6 @@ function buildExplanation(
     gdp: `If ${partnerName}'s economy ${dir} by ${abs}%`,
     sentiment: `If trade relations with ${partnerName} ${change > 0 ? "improve" : "worsen"} by ${abs}%`,
     tariff: `If ${partnerName} ${change > 0 ? "raises" : "lowers"} import barriers by ${abs}%`,
-    fta: change > 0
-      ? `If India signs a Free Trade Agreement with ${partnerName}`
-      : `If India's trade deal with ${partnerName} is removed`,
   }
 
   const headline = scenarioLine[feature] ?? `If ${feature} changes by ${change}%`
@@ -113,9 +97,7 @@ export function SimulationPanel() {
 
   const handleSimulate = () => {
     if (!selectedPartner) return
-    // FTA: use +100 to signal "activate", -100 to signal "remove"
-    const effectiveChange = feature === "fta" ? (change >= 0 ? 100 : -100) : change
-    runSimulation(selectedPartner, feature, effectiveChange)
+    runSimulation(selectedPartner, feature, change)
   }
 
   if (!selectedPartner) {
@@ -186,66 +168,35 @@ export function SimulationPanel() {
         <p className="text-[11px] text-muted-foreground italic">{featureMeta.description}</p>
       </div>
 
-      {/* Slider — hide for FTA (binary) */}
-      {feature !== "fta" ? (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              By how much?
-            </p>
-            <span
-              className={`text-sm font-bold tabular-nums ${
-                change < 0 ? "text-red-500" : "text-green-500"
-              }`}
-            >
-              {change > 0 ? "+" : ""}
-              {change}%
-            </span>
-          </div>
-          <input
-            type="range"
-            min="-50"
-            max="50"
-            step="5"
-            value={change}
-            onChange={(e) => setChange(parseInt(e.target.value))}
-            className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-          />
-          <div className="flex justify-between text-[10px] text-muted-foreground">
-            <span>−50%</span>
-            <SliderLabel change={change} feature={feature} />
-            <span>+50%</span>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-2">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            Scenario
+            By how much?
           </p>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setChange(1)}
-              className={`py-2 rounded-lg border text-xs font-medium transition-all ${
-                change >= 0
-                  ? "bg-green-500/10 border-green-500/30 text-green-600 dark:text-green-400"
-                  : "bg-background hover:bg-muted"
-              }`}
-            >
-              ✅ Sign new deal
-            </button>
-            <button
-              onClick={() => setChange(-1)}
-              className={`py-2 rounded-lg border text-xs font-medium transition-all ${
-                change < 0
-                  ? "bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400"
-                  : "bg-background hover:bg-muted"
-              }`}
-            >
-              ❌ Remove deal
-            </button>
-          </div>
+          <span
+            className={`text-sm font-bold tabular-nums ${
+              change < 0 ? "text-red-500" : "text-green-500"
+            }`}
+          >
+            {change > 0 ? "+" : ""}
+            {change}%
+          </span>
         </div>
-      )}
+        <input
+          type="range"
+          min="-50"
+          max="50"
+          step="5"
+          value={change}
+          onChange={(e) => setChange(parseInt(e.target.value))}
+          className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+        />
+        <div className="flex justify-between text-[10px] text-muted-foreground">
+          <span>−50%</span>
+          <SliderLabel change={change} feature={feature} />
+          <span>+50%</span>
+        </div>
+      </div>
 
       {/* Run button */}
       <button

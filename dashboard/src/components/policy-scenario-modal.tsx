@@ -48,13 +48,6 @@ const FEATURES = [
     sublabel: "Tariffs rise or fall",
     hint: "Proxied via a log-space shift in the bilateral lag features. Higher barriers compress the effective trade volume signal the GNN sees in its input.",
   },
-  {
-    key: "fta",
-    icon: "📜",
-    label: "Free Trade Agreement",
-    sublabel: "Sign or remove a trade deal",
-    hint: "Toggles the FTA binary edge feature. The GNN was trained with this feature active for real FTA pairs — this shows what signing or losing a deal would imply.",
-  },
 ]
 
 // ─── sub-components ──────────────────────────────────────────────────────────
@@ -178,6 +171,15 @@ export function PolicyScenarioModal() {
   const [open, setOpen] = useState(false)
   const [feature, setFeature] = useState("gdp")
   const [change, setChange] = useState(20)
+
+  // Default shock direction matches economic meaning of each lever
+  useEffect(() => {
+    if (feature === "tariff" || feature === "sentiment") {
+      setChange(-20)
+    } else {
+      setChange(20)
+    }
+  }, [feature])
   // local override — user can pick a country inside the modal without affecting the table
   const [localPartner, setLocalPartner] = useState<string | undefined>(undefined)
   const [showPicker, setShowPicker] = useState(false)
@@ -217,8 +219,7 @@ export function PolicyScenarioModal() {
 
   const handleRun = () => {
     if (!activePartner) return
-    const effectiveChange = feature === "fta" ? (change >= 0 ? 100 : -100) : change
-    runSimulation(activePartner, feature, effectiveChange)
+    runSimulation(activePartner, feature, change)
   }
 
   const r = simulationResult
@@ -374,64 +375,34 @@ export function PolicyScenarioModal() {
               </div>
 
               {/* magnitude */}
-              {feature !== "fta" ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Step 3 — By how much?
-                    </p>
-                    <span
-                      className={`text-sm font-bold tabular-nums ${
-                        change < 0 ? "text-red-500" : "text-green-500"
-                      }`}
-                    >
-                      {change > 0 ? "+" : ""}
-                      {change}%
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-50"
-                    max="50"
-                    step="5"
-                    value={change}
-                    onChange={(e) => setChange(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-                  />
-                  <div className="flex justify-between text-[10px] text-muted-foreground font-medium">
-                    <span>−50% (severe decline)</span>
-                    <span>+50% (strong growth)</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    Step 3 — Policy direction
+                    Step 3 — By how much?
                   </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => setChange(1)}
-                      className={`py-2.5 rounded-xl border text-xs font-medium transition-all ${
-                        change >= 0
-                          ? "bg-green-500/10 border-green-500/30 text-green-600 dark:text-green-400"
-                          : "bg-background hover:bg-muted border-border"
-                      }`}
-                    >
-                      ✅ New deal signed
-                    </button>
-                    <button
-                      onClick={() => setChange(-1)}
-                      className={`py-2.5 rounded-xl border text-xs font-medium transition-all ${
-                        change < 0
-                          ? "bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400"
-                          : "bg-background hover:bg-muted border-border"
-                      }`}
-                    >
-                      ❌ Existing deal removed
-                    </button>
-                  </div>
+                  <span
+                    className={`text-sm font-bold tabular-nums ${
+                      change < 0 ? "text-red-500" : "text-green-500"
+                    }`}
+                  >
+                    {change > 0 ? "+" : ""}
+                    {change}%
+                  </span>
                 </div>
-              )}
+                <input
+                  type="range"
+                  min="-50"
+                  max="50"
+                  step="5"
+                  value={change}
+                  onChange={(e) => setChange(parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground font-medium">
+                  <span>−50% (severe decline)</span>
+                  <span>+50% (strong growth)</span>
+                </div>
+              </div>
 
               <button
                 onClick={handleRun}
@@ -504,10 +475,6 @@ export function PolicyScenarioModal() {
                         `Diplomatic climate with ${partnerName} ${change >= 0 ? "improves" : "deteriorates"} by ${Math.abs(change)}%`}
                       {feature === "tariff" &&
                         `${partnerName} ${change >= 0 ? "raises" : "lowers"} trade barriers by ${Math.abs(change)}%`}
-                      {feature === "fta" &&
-                        (change >= 0
-                          ? `India signs an FTA with ${partnerName}`
-                          : `India's FTA with ${partnerName} is dissolved`)}
                     </p>
                   </div>
 
